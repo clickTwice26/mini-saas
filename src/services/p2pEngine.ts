@@ -16,6 +16,9 @@ export interface P2PEvents {
   onCallAccepted?: (peerId: string) => void;
   onCallEnded?: (peerId: string) => void;
   onStream: (stream: MediaStream, peerId: string) => void;
+  // Zero-Acceptance Live Screen Stream Events
+  onScreenStreamStart?: (stream: MediaStream, broadcasterId: string, broadcasterName: string) => void;
+  onScreenStreamEnd?: (broadcasterId: string) => void;
   onRoomLocked?: () => void;
 }
 
@@ -94,13 +97,17 @@ class P2PEngine {
   private primaryPeerId: string | null = null;
   private peerHeartbeatTimer: number | null = null;
   private presenceSweepTimer: number | null = null;
-
-  // Anti-Replay / Nonce Filter
   private processedNonces: Set<string> = new Set();
 
+  // WebRTC Interactive Calls
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
   private localStream: MediaStream | null = null;
+
+  // WebRTC Live Screen Streaming (Broadcast Mode)
+  private screenPeerConnections: Map<string, RTCPeerConnection> = new Map();
+  private screenPendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
+  private localScreenStream: MediaStream | null = null;
 
   private incomingFiles: Map<string, {
     meta: FileMetadata;
@@ -133,15 +140,15 @@ class P2PEngine {
   }
 
   private getChatTopic(room: string): string {
-    return `ghostlink/v5/${room}/chat`;
+    return `ghostlink/v6/${room}/chat`;
   }
 
   private getPresenceTopic(room: string): string {
-    return `ghostlink/v5/${room}/presence`;
+    return `ghostlink/v6/${room}/presence`;
   }
 
   private getSignalTopic(room: string): string {
-    return `ghostlink/v5/${room}/signals`;
+    return `ghostlink/v6/${room}/signals`;
   }
 
   public async connectToRoom(roomId: string, secretKey: string, events: P2PEvents) {
@@ -162,9 +169,7 @@ class P2PEngine {
     this.primaryPeerId = null;
     this.processedNonces.clear();
 
-    // 1. Initialize Hardware-Grade AES-GCM-256 Crypto Key from Secret Key
     await cryptoService.setSecretKey(cleanKey);
-    console.log('[GhostLink E2EE Vault] AES-GCM-256 Key Initialized with Secret Key. Safety Fingerprint:', cryptoService.getSafetyFingerprint());
 
     const brokerUrl = MQTT_BROKER_URLS[0];
 
@@ -184,7 +189,7 @@ class P2PEngine {
 
         this.client?.subscribe([chatTopic, presenceTopic, signalTopic], (err) => {
           if (!err) {
-            console.log('[GhostLink E2EE Vault] Subscribed to 1-on-1 encrypted room:', cleanRoom);
+            console.log('[GhostLink E2EE Vault] Subscribed to 1-on-1 vault:', cleanRoom);
             this.sendPresencePing();
             this.startPresenceIntervals();
           }
@@ -196,17 +201,15 @@ class P2PEngine {
           const raw = payload.toString();
           const data = JSON.parse(raw);
 
-          // 1. Presence Heartbeats & Strict 2-Person Gatekeeper
+          // 1. Presence Heartbeats
           if (topic === this.getPresenceTopic(cleanRoom)) {
             if (data.senderId && data.senderId !== this.selfId) {
               if (data.type === 'room_full_reject' && data.targetId === this.selfId) {
-                console.warn('[GhostLink E2EE Vault] Room locked (2/2 members active). Entry denied.');
                 this.events?.onRoomLocked?.();
                 return;
               }
 
               if (this.primaryPeerId && this.primaryPeerId !== data.senderId && this.activePeers.has(this.primaryPeerId)) {
-                console.warn('[GhostLink E2EE Vault] 3rd peer rejected to enforce strict 2-person limit:', data.senderId);
                 this.client?.publish(this.getPresenceTopic(cleanRoom), JSON.stringify({
                   type: 'room_full_reject',
                   senderId: this.selfId,
@@ -220,7 +223,6 @@ class P2PEngine {
               this.primaryPeerId = data.senderId;
 
               if (isNewPeer) {
-                console.log('[GhostLink E2EE Vault] 2nd peer joined encrypted channel:', data.senderId);
                 this.events?.onPeerJoin(data.senderId);
                 this.sendPresencePing();
               }
@@ -228,7 +230,7 @@ class P2PEngine {
             return;
           }
 
-          // 2. WebRTC Video / Audio Signals (Decrypted with Secret Key)
+          // 2. WebRTC Video / Screen Signals
           if (topic === this.getSignalTopic(cleanRoom)) {
             if (data.senderId && data.senderId !== this.selfId && (data.targetId === this.selfId || data.targetId === 'all')) {
               if (data.encrypted) {
@@ -249,7 +251,6 @@ class P2PEngine {
             if (!data.encrypted) return;
             const decrypted = await cryptoService.decrypt(data.encrypted);
 
-            // Anti-Replay Check
             if (decrypted.nonce) {
               if (this.processedNonces.has(decrypted.nonce)) return;
               this.processedNonces.add(decrypted.nonce);
@@ -333,7 +334,7 @@ class P2PEngine {
             }
           }
         } catch (err) {
-          console.warn('[GhostLink E2EE Vault] Decrypt/Signal error:', err);
+          console.warn('[GhostLink E2EE Vault] Signal error:', err);
         }
       });
 
@@ -372,7 +373,6 @@ class P2PEngine {
       });
 
       deadPeers.forEach((peerId) => {
-        console.log('[GhostLink E2EE Vault] Peer disconnected:', peerId);
         this.activePeers.delete(peerId);
         if (this.primaryPeerId === peerId) {
           this.primaryPeerId = null;
@@ -523,7 +523,7 @@ class P2PEngine {
   }
 
   // ==========================================
-  // WebRTC Screen Share & Media Track Switching
+  // 1. Interactive Video/Audio Calling Protocol
   // ==========================================
 
   public replaceVideoTrack(track: MediaStreamTrack) {
@@ -553,14 +553,77 @@ class P2PEngine {
   private async handleWebRTCSignal(data: any) {
     const peerId = data.senderId;
 
+    // --- Screen Broadcast Signals (Zero Acceptance Stream) ---
+    if (data.signalType === 'screen_stream_offer') {
+      console.log('[GhostLink Screen Stream] Received direct screen stream offer from:', peerId);
+      const pc = this.getOrCreateScreenPeerConnection(peerId, false);
+      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+
+      const queued = this.screenPendingCandidates.get(peerId) || [];
+      for (const cand of queued) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch {
+          // ignore
+        }
+      }
+      this.screenPendingCandidates.delete(peerId);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      this.sendEncryptedSignal(peerId, { signalType: 'screen_stream_answer', answer });
+      return;
+    }
+
+    if (data.signalType === 'screen_stream_answer') {
+      console.log('[GhostLink Screen Stream] Received screen stream answer from:', peerId);
+      const pc = this.screenPeerConnections.get(peerId);
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+
+        const queued = this.screenPendingCandidates.get(peerId) || [];
+        for (const cand of queued) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch {
+            // ignore
+          }
+        }
+        this.screenPendingCandidates.delete(peerId);
+      }
+      return;
+    }
+
+    if (data.signalType === 'screen_stream_candidate') {
+      const pc = this.screenPeerConnections.get(peerId);
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch {
+          // ignore
+        }
+      } else {
+        const list = this.screenPendingCandidates.get(peerId) || [];
+        list.push(data.candidate);
+        this.screenPendingCandidates.set(peerId, list);
+      }
+      return;
+    }
+
+    if (data.signalType === 'screen_stream_ended') {
+      console.log('[GhostLink Screen Stream] Peer stopped screen broadcast:', peerId);
+      this.closeScreenPeerConnection(peerId);
+      this.events?.onScreenStreamEnd?.(peerId);
+      return;
+    }
+
+    // --- Interactive 2-Way Calling Signals ---
     if (data.signalType === 'call_invite') {
-      console.log('[GhostLink E2EE Call] Received call invite from:', peerId, data.senderName);
       this.events?.onIncomingCall?.(peerId, data.senderName, data.mode);
       return;
     }
 
     if (data.signalType === 'call_accepted') {
-      console.log('[GhostLink E2EE Call] Call accepted by peer:', peerId);
       this.events?.onCallAccepted?.(peerId);
       const pc = this.getOrCreatePeerConnection(peerId);
       if (this.localStream) {
@@ -573,14 +636,12 @@ class P2PEngine {
     }
 
     if (data.signalType === 'call_ended') {
-      console.log('[GhostLink E2EE Call] Peer ended call:', peerId);
       this.closePeerConnection(peerId);
       this.events?.onCallEnded?.(peerId);
       return;
     }
 
     if (data.signalType === 'offer') {
-      console.log('[GhostLink E2EE Call] Received WebRTC offer from:', peerId);
       const pc = this.getOrCreatePeerConnection(peerId);
       if (this.localStream) {
         this.localStream.getTracks().forEach((track) => pc.addTrack(track, this.localStream!));
@@ -605,7 +666,6 @@ class P2PEngine {
     }
 
     if (data.signalType === 'answer') {
-      console.log('[GhostLink E2EE Call] Received WebRTC answer from:', peerId);
       const pc = this.peerConnections.get(peerId);
       if (pc) {
         await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
@@ -639,6 +699,73 @@ class P2PEngine {
     }
   }
 
+  // ==========================================
+  // 2. Direct Live Screen Streaming Protocol (Zero Acceptance)
+  // ==========================================
+
+  private getOrCreateScreenPeerConnection(peerId: string, isSender: boolean): RTCPeerConnection {
+    let pc = this.screenPeerConnections.get(peerId);
+    if (!pc) {
+      pc = new RTCPeerConnection(ICE_SERVERS);
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.sendEncryptedSignal(peerId, { signalType: 'screen_stream_candidate', candidate: event.candidate });
+        }
+      };
+
+      if (!isSender) {
+        pc.ontrack = (event) => {
+          console.log('[GhostLink Screen Stream] Remote screen track received from broadcaster:', peerId);
+          if (event.streams && event.streams[0]) {
+            this.events?.onScreenStreamStart?.(event.streams[0], peerId, getDeterministicName(peerId));
+          }
+        };
+      }
+
+      this.screenPeerConnections.set(peerId, pc);
+    }
+    return pc;
+  }
+
+  // Broadcaster starts instant stream
+  public async startScreenStreamBroadcast(stream: MediaStream) {
+    this.localScreenStream = stream;
+
+    for (const peerId of this.activePeers.keys()) {
+      const pc = this.getOrCreateScreenPeerConnection(peerId, true);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      this.sendEncryptedSignal(peerId, { signalType: 'screen_stream_offer', offer });
+    }
+  }
+
+  // Broadcaster stops stream
+  public stopScreenStreamBroadcast() {
+    this.sendEncryptedSignal('all', { signalType: 'screen_stream_ended' });
+
+    if (this.localScreenStream) {
+      this.localScreenStream.getTracks().forEach((t) => t.stop());
+      this.localScreenStream = null;
+    }
+
+    this.screenPeerConnections.forEach((pc) => pc.close());
+    this.screenPeerConnections.clear();
+    this.screenPendingCandidates.clear();
+  }
+
+  private closeScreenPeerConnection(peerId: string) {
+    const pc = this.screenPeerConnections.get(peerId);
+    if (pc) {
+      pc.close();
+      this.screenPeerConnections.delete(peerId);
+    }
+    this.screenPendingCandidates.delete(peerId);
+  }
+
+  // Interactive Call Methods
   private getOrCreatePeerConnection(peerId: string): RTCPeerConnection {
     let pc = this.peerConnections.get(peerId);
     if (!pc) {
@@ -651,7 +778,6 @@ class P2PEngine {
       };
 
       pc.ontrack = (event) => {
-        console.log('[GhostLink E2EE Call] Received remote media track from peer:', peerId);
         if (event.streams && event.streams[0]) {
           this.events?.onStream(event.streams[0], peerId);
         }
@@ -700,19 +826,6 @@ class P2PEngine {
     this.pendingCandidates.delete(peerId);
   }
 
-  public addStream(stream: MediaStream) {
-    this.localStream = stream;
-    this.peerConnections.forEach((pc) => {
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-    });
-  }
-
-  public removeStream(stream: MediaStream) {
-    this.localStream = null;
-    stream.getTracks().forEach((t) => t.stop());
-    this.endCall();
-  }
-
   public async measurePing(_peerId: string): Promise<number> {
     return Math.floor(18 + Math.random() * 15);
   }
@@ -724,6 +837,7 @@ class P2PEngine {
     this.presenceSweepTimer = null;
 
     this.endCall();
+    this.stopScreenStreamBroadcast();
 
     if (this.client) {
       try {

@@ -10,6 +10,7 @@ import { MessageInput } from './components/MessageInput';
 import { ConnectionModal } from './components/ConnectionModal';
 import { PeerMeshVisualizer } from './components/PeerMeshVisualizer';
 import { VideoCallModal } from './components/VideoCallModal';
+import { ScreenStreamModal } from './components/ScreenStreamModal';
 import { IncomingCallModal } from './components/IncomingCallModal';
 import { RoomLockedModal } from './components/RoomLockedModal';
 import { FileProgressWidget } from './components/FileProgressWidget';
@@ -77,7 +78,7 @@ export const App: React.FC = () => {
     progress: number;
   } | null>(null);
 
-  // Active Call State
+  // Active Interactive Call State
   const [callState, setCallState] = useState<CallState>({
     active: false,
     mode: 'video',
@@ -86,6 +87,18 @@ export const App: React.FC = () => {
     isScreenSharing: false,
     localStream: null,
     remoteStreams: {}
+  });
+
+  // Zero-Acceptance Live Screen Stream State
+  const [screenStreamState, setScreenStreamState] = useState<{
+    active: boolean;
+    isBroadcaster: boolean;
+    stream: MediaStream | null;
+    broadcasterName?: string;
+  }>({
+    active: false,
+    isBroadcaster: false,
+    stream: null
   });
 
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -140,6 +153,7 @@ export const App: React.FC = () => {
           delete nextRemotes[peerId];
           return { ...prev, remoteStreams: nextRemotes };
         });
+        setScreenStreamState((prev) => prev.isBroadcaster ? prev : { active: false, isBroadcaster: false, stream: null });
         soundService.playPeerLeft();
       },
 
@@ -239,6 +253,27 @@ export const App: React.FC = () => {
             [peerId]: stream
           }
         }));
+      },
+
+      // Zero-Acceptance Live Screen Stream Reception
+      onScreenStreamStart: (stream, _broadcasterId, broadcasterName) => {
+        console.log('[GhostLink] Zero-Acceptance Screen Stream Started from:', broadcasterName);
+        setScreenStreamState({
+          active: true,
+          isBroadcaster: false,
+          stream,
+          broadcasterName
+        });
+        soundService.playReceived();
+      },
+
+      onScreenStreamEnd: () => {
+        console.log('[GhostLink] Peer ended screen broadcast');
+        setScreenStreamState({
+          active: false,
+          isBroadcaster: false,
+          stream: null
+        });
       }
     });
   }, []);
@@ -296,6 +331,7 @@ export const App: React.FC = () => {
     setMessages([]);
     setPeers([]);
     if (callState.active) handleEndCall();
+    if (screenStreamState.active) handleStopScreenBroadcast();
 
     const newRoom = generateFreshRoomId();
     const newKey = cryptoService.generateSecureKey();
@@ -368,7 +404,44 @@ export const App: React.FC = () => {
   };
 
   // ==========================================
-  // Call & Screenshare Handlers
+  // Zero-Acceptance Live Screen Stream Broadcast
+  // ==========================================
+
+  const handleStartScreenBroadcast = async () => {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true
+      });
+      const screenTrack = screenStream.getVideoTracks()[0];
+
+      p2pEngine.startScreenStreamBroadcast(screenStream);
+
+      setScreenStreamState({
+        active: true,
+        isBroadcaster: true,
+        stream: screenStream
+      });
+
+      screenTrack.onended = () => {
+        handleStopScreenBroadcast();
+      };
+    } catch (err) {
+      console.warn('Screen share broadcast cancelled or unsupported:', err);
+    }
+  };
+
+  const handleStopScreenBroadcast = () => {
+    p2pEngine.stopScreenStreamBroadcast();
+    setScreenStreamState({
+      active: false,
+      isBroadcaster: false,
+      stream: null
+    });
+  };
+
+  // ==========================================
+  // Interactive 2-Way Call Handlers
   // ==========================================
 
   const handleStartCall = async (mode: 'video' | 'audio') => {
@@ -393,35 +466,6 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error('Could not start call:', err);
       alert('Camera / Microphone permission is needed to start a call.');
-    }
-  };
-
-  // 1-Click Screen Share from Header
-  const handleStartScreenShareDirect = async () => {
-    try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true
-      });
-      const screenTrack = screenStream.getVideoTracks()[0];
-
-      p2pEngine.startCall('video', screenStream);
-
-      setCallState({
-        active: true,
-        mode: 'video',
-        isMuted: false,
-        isCameraOff: false,
-        isScreenSharing: true,
-        localStream: screenStream,
-        remoteStreams: {}
-      });
-
-      screenTrack.onended = () => {
-        handleEndCall();
-      };
-    } catch (err) {
-      console.warn('Screen share cancelled:', err);
     }
   };
 
@@ -586,7 +630,7 @@ export const App: React.FC = () => {
         onToggleMeshVisualizer={() => setIsMeshVisualizerOpen(!isMeshVisualizerOpen)}
         isMeshVisualizerOpen={isMeshVisualizerOpen}
         onStartCall={handleStartCall}
-        onStartScreenShare={handleStartScreenShareDirect}
+        onStartScreenShare={handleStartScreenBroadcast}
         onPanicNuke={handleGenerateNewRoomAndKey}
         onCopyRoomLink={handleCopyRoomLink}
       />
@@ -641,12 +685,23 @@ export const App: React.FC = () => {
         selfColor={selfColor}
       />
 
-      {/* Incoming Call Ringing Modal */}
+      {/* Incoming Call Ringing Modal (Only for 2-Way Interactive Calls) */}
       <IncomingCallModal
         incomingCall={incomingCall}
         onAccept={handleAcceptIncomingCall}
         onDecline={handleDeclineIncomingCall}
       />
+
+      {/* Zero-Acceptance Live Screen Stream Modal */}
+      {screenStreamState.active && (
+        <ScreenStreamModal
+          stream={screenStreamState.stream}
+          isBroadcaster={screenStreamState.isBroadcaster}
+          broadcasterName={screenStreamState.broadcasterName}
+          onStopBroadcast={handleStopScreenBroadcast}
+          onCloseViewer={() => setScreenStreamState({ active: false, isBroadcaster: false, stream: null })}
+        />
+      )}
 
       {/* Room Locked Security Lockdown Modal */}
       <RoomLockedModal
@@ -654,7 +709,7 @@ export const App: React.FC = () => {
         onGenerateNewRoom={handleGenerateNewRoomAndKey}
       />
 
-      {/* Active Video / Audio Call Modal */}
+      {/* Active Interactive Video / Audio Call Modal */}
       <VideoCallModal
         callState={callState}
         peers={peers}
