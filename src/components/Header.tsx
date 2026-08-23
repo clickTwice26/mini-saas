@@ -9,11 +9,12 @@ import {
   Volume2, 
   VolumeX, 
   Trash2, 
-  Share2,
-  Activity,
-  Lock,
-  KeyRound,
-  X
+  Share2, 
+  Activity, 
+  Lock, 
+  KeyRound, 
+  Monitor, 
+  X 
 } from 'lucide-react';
 import type { PeerInfo } from '../types';
 import { cryptoService } from '../services/cryptoService';
@@ -28,6 +29,7 @@ interface HeaderProps {
   onToggleMeshVisualizer: () => void;
   isMeshVisualizerOpen: boolean;
   onStartCall: (mode: 'video' | 'audio') => void;
+  onStartScreenShare: () => void;
   onPanicNuke: () => void;
   onCopyRoomLink: () => void;
 }
@@ -42,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMeshVisualizer,
   isMeshVisualizerOpen,
   onStartCall,
+  onStartScreenShare,
   onPanicNuke,
   onCopyRoomLink,
 }) => {
@@ -193,6 +196,20 @@ export const Header: React.FC<HeaderProps> = ({
             title="Live Peer Topology Visualizer"
           >
             <Activity size={18} />
+          </button>
+
+          {/* Direct Screen Share Button */}
+          <button 
+            className="btn-cyber-icon"
+            onClick={onStartScreenShare}
+            disabled={peerCount === 0}
+            style={{ 
+              opacity: peerCount === 0 ? 0.45 : 1, 
+              cursor: peerCount === 0 ? 'not-allowed' : 'pointer'
+            }}
+            title={peerCount === 0 ? "Connect with your peer to share screen" : "Share Screen Live (1080p)"}
+          >
+            <Monitor size={18} />
           </button>
 
           {/* Video Call Trigger */}

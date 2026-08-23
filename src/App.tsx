@@ -88,6 +88,8 @@ export const App: React.FC = () => {
     remoteStreams: {}
   });
 
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
   const selfName = p2pEngine.myName;
   const selfColor = p2pEngine.myColor;
   const selfId = p2pEngine.selfId;
@@ -105,7 +107,6 @@ export const App: React.FC = () => {
     }
 
     currentActiveSessionRef.current = sessionFingerprint;
-    // Update URL fragment without reloading
     window.history.replaceState(null, '', `#room=${encodeURIComponent(cleanRoom)}&key=${encodeURIComponent(cleanKey)}`);
     setPeers([]);
     setIsRoomLockedOpen(false);
@@ -367,7 +368,7 @@ export const App: React.FC = () => {
   };
 
   // ==========================================
-  // Call Handlers
+  // Call & Screenshare Handlers
   // ==========================================
 
   const handleStartCall = async (mode: 'video' | 'audio') => {
@@ -377,6 +378,7 @@ export const App: React.FC = () => {
         audio: true
       });
 
+      cameraStreamRef.current = stream;
       p2pEngine.startCall(mode, stream);
 
       setCallState({
@@ -394,6 +396,35 @@ export const App: React.FC = () => {
     }
   };
 
+  // 1-Click Screen Share from Header
+  const handleStartScreenShareDirect = async () => {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true
+      });
+      const screenTrack = screenStream.getVideoTracks()[0];
+
+      p2pEngine.startCall('video', screenStream);
+
+      setCallState({
+        active: true,
+        mode: 'video',
+        isMuted: false,
+        isCameraOff: false,
+        isScreenSharing: true,
+        localStream: screenStream,
+        remoteStreams: {}
+      });
+
+      screenTrack.onended = () => {
+        handleEndCall();
+      };
+    } catch (err) {
+      console.warn('Screen share cancelled:', err);
+    }
+  };
+
   const handleAcceptIncomingCall = async () => {
     if (!incomingCall) return;
 
@@ -403,6 +434,7 @@ export const App: React.FC = () => {
         audio: true
       });
 
+      cameraStreamRef.current = stream;
       p2pEngine.acceptCall(incomingCall.callerId, stream);
 
       setCallState({
@@ -448,32 +480,47 @@ export const App: React.FC = () => {
     }
   };
 
+  const stopScreenSharing = () => {
+    if (cameraStreamRef.current) {
+      const cameraTrack = cameraStreamRef.current.getVideoTracks()[0];
+      if (cameraTrack) {
+        p2pEngine.replaceVideoTrack(cameraTrack);
+      }
+      setCallState((prev) => ({
+        ...prev,
+        isScreenSharing: false,
+        localStream: cameraStreamRef.current
+      }));
+    }
+  };
+
   const handleToggleScreenShare = async () => {
     if (!callState.active) return;
 
     if (!callState.isScreenSharing) {
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true
+        });
         const screenTrack = screenStream.getVideoTracks()[0];
 
-        if (callState.localStream) {
-          const oldVideoTrack = callState.localStream.getVideoTracks()[0];
-          if (oldVideoTrack) {
-            callState.localStream.removeTrack(oldVideoTrack);
-          }
-          callState.localStream.addTrack(screenTrack);
-        }
+        p2pEngine.replaceVideoTrack(screenTrack);
+
+        setCallState((prev) => ({
+          ...prev,
+          isScreenSharing: true,
+          localStream: screenStream
+        }));
 
         screenTrack.onended = () => {
-          handleStartCall(callState.mode);
+          stopScreenSharing();
         };
-
-        setCallState((prev) => ({ ...prev, isScreenSharing: true }));
       } catch (err) {
-        console.error('Screen sharing error:', err);
+        console.warn('Screen share cancelled or unsupported:', err);
       }
     } else {
-      handleStartCall(callState.mode);
+      stopScreenSharing();
     }
   };
 
@@ -481,6 +528,10 @@ export const App: React.FC = () => {
     p2pEngine.endCall();
     if (callState.localStream) {
       callState.localStream.getTracks().forEach((t) => t.stop());
+    }
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
     }
     setCallState({
       active: false,
@@ -535,6 +586,7 @@ export const App: React.FC = () => {
         onToggleMeshVisualizer={() => setIsMeshVisualizerOpen(!isMeshVisualizerOpen)}
         isMeshVisualizerOpen={isMeshVisualizerOpen}
         onStartCall={handleStartCall}
+        onStartScreenShare={handleStartScreenShareDirect}
         onPanicNuke={handleGenerateNewRoomAndKey}
         onCopyRoomLink={handleCopyRoomLink}
       />

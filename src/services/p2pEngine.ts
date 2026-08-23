@@ -47,7 +47,7 @@ export const getDeterministicName = (id: string): string => {
 };
 
 const CHUNK_SIZE = 32 * 1024;
-const MAX_ALLOWED_PEERS = 1; // Strict 1-on-1
+const MAX_ALLOWED_PEERS = 1; // Strict 1-on-1 Private Vault
 
 const MQTT_BROKER_URLS = [
   'wss://broker.hivemq.com:8884/mqtt',
@@ -95,6 +95,9 @@ class P2PEngine {
   private peerHeartbeatTimer: number | null = null;
   private presenceSweepTimer: number | null = null;
 
+  // Anti-Replay / Nonce Filter
+  private processedNonces: Set<string> = new Set();
+
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
   private localStream: MediaStream | null = null;
@@ -130,15 +133,15 @@ class P2PEngine {
   }
 
   private getChatTopic(room: string): string {
-    return `ghostlink/v4/${room}/chat`;
+    return `ghostlink/v5/${room}/chat`;
   }
 
   private getPresenceTopic(room: string): string {
-    return `ghostlink/v4/${room}/presence`;
+    return `ghostlink/v5/${room}/presence`;
   }
 
   private getSignalTopic(room: string): string {
-    return `ghostlink/v4/${room}/signals`;
+    return `ghostlink/v5/${room}/signals`;
   }
 
   public async connectToRoom(roomId: string, secretKey: string, events: P2PEvents) {
@@ -147,7 +150,6 @@ class P2PEngine {
     if (!cleanRoom || !cleanKey) return;
 
     if (this.client && this.currentRoomId === cleanRoom && this.currentSecretKey === cleanKey && this.client.connected) {
-      console.log('[GhostLink E2EE] Already active in room:', cleanRoom);
       return;
     }
 
@@ -158,10 +160,11 @@ class P2PEngine {
     this.events = events;
     this.activePeers.clear();
     this.primaryPeerId = null;
+    this.processedNonces.clear();
 
     // 1. Initialize Hardware-Grade AES-GCM-256 Crypto Key from Secret Key
     await cryptoService.setSecretKey(cleanKey);
-    console.log('[GhostLink E2EE] AES-GCM-256 Key Initialized with secret key. Fingerprint:', cryptoService.getSafetyFingerprint());
+    console.log('[GhostLink E2EE Vault] AES-GCM-256 Key Initialized with Secret Key. Safety Fingerprint:', cryptoService.getSafetyFingerprint());
 
     const brokerUrl = MQTT_BROKER_URLS[0];
 
@@ -181,7 +184,7 @@ class P2PEngine {
 
         this.client?.subscribe([chatTopic, presenceTopic, signalTopic], (err) => {
           if (!err) {
-            console.log('[GhostLink E2EE] Subscribed to 1-on-1 encrypted room channel:', cleanRoom);
+            console.log('[GhostLink E2EE Vault] Subscribed to 1-on-1 encrypted room:', cleanRoom);
             this.sendPresencePing();
             this.startPresenceIntervals();
           }
@@ -197,13 +200,13 @@ class P2PEngine {
           if (topic === this.getPresenceTopic(cleanRoom)) {
             if (data.senderId && data.senderId !== this.selfId) {
               if (data.type === 'room_full_reject' && data.targetId === this.selfId) {
-                console.warn('[GhostLink E2EE] Room is locked (2/2 members active). Entry denied.');
+                console.warn('[GhostLink E2EE Vault] Room locked (2/2 members active). Entry denied.');
                 this.events?.onRoomLocked?.();
                 return;
               }
 
               if (this.primaryPeerId && this.primaryPeerId !== data.senderId && this.activePeers.has(this.primaryPeerId)) {
-                console.warn('[GhostLink E2EE] 3rd peer rejected to enforce strict 2-person limit:', data.senderId);
+                console.warn('[GhostLink E2EE Vault] 3rd peer rejected to enforce strict 2-person limit:', data.senderId);
                 this.client?.publish(this.getPresenceTopic(cleanRoom), JSON.stringify({
                   type: 'room_full_reject',
                   senderId: this.selfId,
@@ -217,7 +220,7 @@ class P2PEngine {
               this.primaryPeerId = data.senderId;
 
               if (isNewPeer) {
-                console.log('[GhostLink E2EE] 2nd peer joined encrypted channel:', data.senderId);
+                console.log('[GhostLink E2EE Vault] 2nd peer joined encrypted channel:', data.senderId);
                 this.events?.onPeerJoin(data.senderId);
                 this.sendPresencePing();
               }
@@ -245,6 +248,16 @@ class P2PEngine {
 
             if (!data.encrypted) return;
             const decrypted = await cryptoService.decrypt(data.encrypted);
+
+            // Anti-Replay Check
+            if (decrypted.nonce) {
+              if (this.processedNonces.has(decrypted.nonce)) return;
+              this.processedNonces.add(decrypted.nonce);
+              if (this.processedNonces.size > 1000) {
+                const first = this.processedNonces.values().next().value;
+                if (first) this.processedNonces.delete(first);
+              }
+            }
 
             switch (decrypted.type) {
               case 'chat':
@@ -320,12 +333,12 @@ class P2PEngine {
             }
           }
         } catch (err) {
-          console.warn('[GhostLink E2EE] Decrypt/Signal error:', err);
+          console.warn('[GhostLink E2EE Vault] Decrypt/Signal error:', err);
         }
       });
 
     } catch (err) {
-      console.error('[GhostLink E2EE] Setup error:', err);
+      console.error('[GhostLink E2EE Vault] Setup error:', err);
     }
   }
 
@@ -359,7 +372,7 @@ class P2PEngine {
       });
 
       deadPeers.forEach((peerId) => {
-        console.log('[GhostLink E2EE] Peer disconnected:', peerId);
+        console.log('[GhostLink E2EE Vault] Peer disconnected:', peerId);
         this.activePeers.delete(peerId);
         if (this.primaryPeerId === peerId) {
           this.primaryPeerId = null;
@@ -373,7 +386,11 @@ class P2PEngine {
     if (!this.client || !this.currentRoomId) return;
     const topic = this.getChatTopic(this.currentRoomId);
 
-    const encrypted = await cryptoService.encrypt(payload);
+    const nonce = 'nonce_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    const encrypted = await cryptoService.encrypt({
+      ...payload,
+      nonce
+    });
 
     const fullPayload = JSON.stringify({
       encrypted,
@@ -503,6 +520,20 @@ class P2PEngine {
       },
       status: this.activePeers.size > 0 ? 'delivered' : 'sent'
     };
+  }
+
+  // ==========================================
+  // WebRTC Screen Share & Media Track Switching
+  // ==========================================
+
+  public replaceVideoTrack(track: MediaStreamTrack) {
+    this.peerConnections.forEach((pc) => {
+      const senders = pc.getSenders();
+      const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+      if (videoSender) {
+        videoSender.replaceTrack(track);
+      }
+    });
   }
 
   private async sendEncryptedSignal(targetId: string, signalData: Record<string, unknown>) {
@@ -706,6 +737,7 @@ class P2PEngine {
     this.activePeers.clear();
     this.primaryPeerId = null;
     this.incomingFiles.clear();
+    this.processedNonces.clear();
     this.currentRoomId = '';
     this.currentSecretKey = '';
   }
