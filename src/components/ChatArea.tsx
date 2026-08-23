@@ -1,17 +1,33 @@
-import React, { useEffect, useRef } from 'react';
-import { 
-  FileText, 
-  Download, 
-  Clock, 
-  Check, 
-  ShieldCheck, 
-  Lock, 
-  Zap, 
-  Copy, 
-  KeyRound,
-  Image as ImageIcon,
-  Smile
-} from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Box,
+  Typography,
+  Chip,
+  IconButton,
+  Button,
+  Avatar,
+  Popover,
+  alpha,
+  useTheme
+} from '@mui/material';
+import {
+  LockIcon,
+  Copy01Icon,
+  CheckmarkBadge01Icon,
+  Download01Icon,
+  File01Icon,
+  Image01Icon,
+  Clock01Icon,
+  QrCodeIcon,
+  SparklesIcon,
+  SmileIcon,
+  ThumbsUpIcon,
+  FavouriteIcon,
+  FireIcon,
+  Rocket01Icon,
+  StarIcon,
+  UserGroupIcon
+} from 'hugeicons-react';
 import type { ChatMessage, PeerInfo } from '../types';
 import { AudioMemoPlayer } from './AudioMemoPlayer';
 
@@ -24,7 +40,20 @@ interface ChatAreaProps {
   onReact: (messageId: string, emoji: string) => void;
 }
 
-const COMMON_REACTIONS = ['👍', '❤️', '🔥', '🚀', '🔒', '😂'];
+interface ReactionDef {
+  key: string;
+  label: string;
+  renderIcon: (size?: number, color?: string) => React.ReactNode;
+}
+
+const HUGE_REACTIONS: ReactionDef[] = [
+  { key: 'thumb', label: 'Like', renderIcon: (s = 15, c) => <ThumbsUpIcon size={s} color={c} /> },
+  { key: 'heart', label: 'Love', renderIcon: (s = 15, c) => <FavouriteIcon size={s} color={c} /> },
+  { key: 'fire', label: 'Fire', renderIcon: (s = 15, c) => <FireIcon size={s} color={c} /> },
+  { key: 'rocket', label: 'Rocket', renderIcon: (s = 15, c) => <Rocket01Icon size={s} color={c} /> },
+  { key: 'star', label: 'Star', renderIcon: (s = 15, c) => <StarIcon size={s} color={c} /> },
+  { key: 'lock', label: 'Secure', renderIcon: (s = 15, c) => <LockIcon size={s} color={c} /> }
+];
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
   messages,
@@ -34,11 +63,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onOpenConnectModal,
   onReact,
 }) => {
+  const theme = useTheme();
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const [copiedTextId, setCopiedTextId] = React.useState<string | null>(null);
-  const [activeReactionPicker, setActiveReactionPicker] = React.useState<string | null>(null);
+  const [copiedTextId, setCopiedTextId] = useState<string | null>(null);
+  const [reactionAnchor, setReactionAnchor] = useState<{ el: HTMLElement; messageId: string } | null>(null);
 
-  // Auto-scroll on new message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -61,251 +90,230 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setTimeout(() => setCopiedTextId(null), 2000);
   };
 
-  // Simple safe markdown renderer for bold, code, links
   const renderFormattedText = (text: string, messageId: string) => {
-    // Check for fenced code block ```code```
     if (text.startsWith('```') && text.endsWith('```')) {
       const codeContent = text.slice(3, -3).replace(/^[a-z]+\n/, '');
       return (
-        <div style={{
-          position: 'relative',
-          background: 'rgba(4, 7, 13, 0.85)',
-          borderRadius: '10px',
-          padding: '12px 14px',
-          margin: '6px 0',
-          border: '1px solid rgba(0, 242, 254, 0.25)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.82rem',
-          overflowX: 'auto'
-        }}>
-          <button
+        <Box
+          sx={{
+            position: 'relative',
+            backgroundColor: alpha('#020617', 0.8),
+            borderRadius: '6px',
+            p: 1.5,
+            my: 0.5,
+            border: `1px solid ${alpha(theme.palette.primary.main, 0.25)}`,
+            fontFamily: 'monospace',
+            fontSize: '0.8rem',
+            overflowX: 'auto'
+          }}
+        >
+          <IconButton
+            size="small"
             onClick={() => copyCodeSnippet(codeContent, messageId)}
-            style={{
+            sx={{
               position: 'absolute',
-              top: '8px',
-              right: '8px',
-              background: 'rgba(255, 255, 255, 0.1)',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '4px 8px',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              fontSize: '0.72rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
+              top: 6,
+              right: 6,
+              backgroundColor: alpha('#ffffff', 0.1),
+              borderRadius: '4px',
+              p: 0.5
             }}
           >
-            {copiedTextId === messageId ? <Check size={12} color="var(--emerald-primary)" /> : <Copy size={12} />}
-            <span>{copiedTextId === messageId ? 'Copied' : 'Copy'}</span>
-          </button>
+            {copiedTextId === messageId ? <CheckmarkBadge01Icon size={14} color={theme.palette.success.main} /> : <Copy01Icon size={14} />}
+          </IconButton>
           <pre style={{ margin: 0, color: '#e2e8f0', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
             {codeContent}
           </pre>
-        </div>
+        </Box>
       );
     }
 
-    // Process inline text and line breaks
     return (
-      <span style={{ lineHeight: '1.5', wordBreak: 'break-word' }}>
+      <Typography variant="body2" sx={{ lineHeight: 1.5, wordBreak: 'break-word' }}>
         {text.split('\n').map((line, lineIdx) => (
           <React.Fragment key={lineIdx}>
             {lineIdx > 0 && <br />}
             {line}
           </React.Fragment>
         ))}
-      </span>
+      </Typography>
     );
   };
 
   const typingPeers = peers.filter((p) => p.isTyping);
   const isRoomFull = peers.length >= 1;
 
+  const getReactionIcon = (reactionKey: string) => {
+    const found = HUGE_REACTIONS.find((r) => r.key === reactionKey);
+    if (found) return found.renderIcon(13);
+    return <SparklesIcon size={13} />;
+  };
+
   return (
-    <div style={{
-      flex: 1,
-      overflowY: 'auto',
-      padding: '16px 24px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '16px',
-      position: 'relative'
-    }}>
-      {/* Live Peer Status Indicator Bar */}
-      <div style={{
+    <Box
+      sx={{
+        flex: 1,
+        overflowY: 'auto',
+        p: { xs: 1.5, sm: 2 },
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '8px 16px',
-        borderRadius: '12px',
-        background: isRoomFull ? 'rgba(16, 185, 129, 0.12)' : 'rgba(0, 242, 254, 0.08)',
-        border: isRoomFull ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(0, 242, 254, 0.25)',
-        fontSize: '0.78rem',
-        animation: 'fadeIn 0.2s ease-out'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className={isRoomFull ? "status-pulse" : "status-pulse-cyan"} />
-          <span style={{ fontWeight: 700, color: isRoomFull ? 'var(--emerald-primary)' : 'var(--cyan-primary)' }}>
-            {isRoomFull 
-              ? `🔒 1-on-1 Encrypted Session Active (2/2 Peers) • AES-GCM-256` 
-              : `📡 Awaiting 2nd Peer in Room #${currentRoomId.toUpperCase()}...`}
-          </span>
-          {!isRoomFull && (
-            <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>
-              (Strict 2-Person Vault • Scan QR code to pair)
-            </span>
-          )}
-        </div>
-
-        {!isRoomFull && (
-          <button
-            onClick={onOpenConnectModal}
-            className="btn-cyber-primary"
-            style={{ padding: '4px 10px', fontSize: '0.72rem' }}
-          >
-            Show QR Code
-          </button>
-        )}
-      </div>
-
-      {/* Welcome / Empty Room Banner */}
-      {messages.length === 0 && (
-        <div style={{
-          margin: 'auto',
-          maxWidth: '540px',
-          textAlign: 'center',
-          padding: '32px 24px',
-          background: 'radial-gradient(circle at 50% 30%, rgba(0, 242, 254, 0.08) 0%, rgba(14, 20, 32, 0.6) 80%)',
-          borderRadius: '24px',
-          border: '1px solid rgba(0, 242, 254, 0.2)',
-          boxShadow: '0 0 40px rgba(0, 242, 254, 0.08)'
-        }}>
-          <div style={{
-            width: '60px',
-            height: '60px',
-            borderRadius: '20px',
-            background: 'linear-gradient(135deg, rgba(0,242,254,0.2) 0%, rgba(168,85,247,0.2) 100%)',
-            border: '1px solid rgba(0,242,254,0.4)',
+        flexDirection: 'column',
+        gap: 1.5
+      }}
+    >
+      {/* Subtle Connection Status Strip (Only when messages exist or peer joins) */}
+      {messages.length > 0 && (
+        <Box
+          sx={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto 16px',
-            boxShadow: '0 0 20px rgba(0,242,254,0.2)'
-          }}>
-            <Lock size={30} color="var(--cyan-primary)" />
-          </div>
+            justifyContent: 'space-between',
+            px: 1.5,
+            py: 0.6,
+            borderRadius: '6px',
+            backgroundColor: isRoomFull ? alpha(theme.palette.success.main, 0.06) : alpha(theme.palette.primary.main, 0.05),
+            border: `1px solid ${isRoomFull ? alpha(theme.palette.success.main, 0.2) : theme.palette.divider}`
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
+            <Box
+              sx={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                backgroundColor: isRoomFull ? theme.palette.success.main : theme.palette.primary.main
+              }}
+            />
+            <Typography variant="caption" sx={{ fontWeight: 600, color: isRoomFull ? theme.palette.success.light : theme.palette.text.secondary }}>
+              {isRoomFull ? 'Connected with peer' : 'Waiting for peer to connect'}
+            </Typography>
+          </Box>
 
-          <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#ffffff', marginBottom: '8px' }}>
-            Strict 1-on-1 Encrypted Vault
-          </h3>
-
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '20px' }}>
-            Connected to room <strong style={{ color: 'var(--cyan-primary)' }}>#{currentRoomId.toUpperCase()}</strong>. 
-            Protected by <strong>Hardware-Grade AES-GCM-256</strong> End-to-End Encryption with strict <strong>2-person capacity locking</strong>.
-          </p>
-
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: '10px',
-            marginBottom: '22px'
-          }}>
-            <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
-              <ShieldCheck size={16} color="var(--emerald-primary)" style={{ marginBottom: '4px' }} />
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>AES-GCM-256</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>Zero-Knowledge E2EE</div>
-            </div>
-
-            <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
-              <Lock size={16} color="var(--cyan-primary)" style={{ marginBottom: '4px' }} />
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>2-Person Lock</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>1-on-1 Vault only</div>
-            </div>
-
-            <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
-              <Zap size={16} color="var(--violet-primary)" style={{ marginBottom: '4px' }} />
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>Zero Database</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>RAM-only transit</div>
-            </div>
-          </div>
-
-          <button className="btn-cyber-primary" onClick={onOpenConnectModal} style={{ margin: '0 auto' }}>
-            <KeyRound size={16} />
-            <span>Invite 2nd Peer via QR or Code</span>
-          </button>
-        </div>
+          {!isRoomFull && (
+            <Button
+              size="small"
+              variant="text"
+              color="primary"
+              onClick={onOpenConnectModal}
+              sx={{ py: 0.1, px: 1, fontSize: '0.72rem', height: 22 }}
+            >
+              Invite
+            </Button>
+          )}
+        </Box>
       )}
 
-      {/* Message Stream */}
+      {/* Clean Minimalist Empty State (No marketing fluff, pure functional) */}
+      {messages.length === 0 && (
+        <Box
+          sx={{
+            m: 'auto',
+            maxWidth: 380,
+            textAlign: 'center',
+            p: 3,
+            backgroundColor: alpha(theme.palette.background.paper, 0.5),
+            borderRadius: '10px',
+            border: `1px solid ${theme.palette.divider}`
+          }}
+        >
+          <Avatar
+            sx={{
+              width: 44,
+              height: 44,
+              m: '0 auto 12px',
+              backgroundColor: alpha(theme.palette.primary.main, 0.12),
+              color: theme.palette.primary.main,
+              borderRadius: '8px'
+            }}
+          >
+            {isRoomFull ? <UserGroupIcon size={22} /> : <LockIcon size={22} />}
+          </Avatar>
+
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
+            Room #{currentRoomId.toUpperCase()}
+          </Typography>
+
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mb: 2.5, fontSize: '0.82rem' }}>
+            {isRoomFull
+              ? 'Connected with peer. Send a message to start chatting.'
+              : 'Share the invite link or QR code with another person to connect.'}
+          </Typography>
+
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            startIcon={<QrCodeIcon size={16} />}
+            onClick={onOpenConnectModal}
+            sx={{ px: 2, py: 0.8, borderRadius: '6px' }}
+          >
+            Invite via QR or Link
+          </Button>
+        </Box>
+      )}
+
+      {/* Message List */}
       {messages.map((msg) => {
         const isSelf = msg.senderId === selfId;
         const isImage = msg.fileData?.type.startsWith('image/');
 
         return (
-          <div
+          <Box
             key={msg.id}
-            style={{
+            sx={{
               display: 'flex',
               flexDirection: 'column',
               alignItems: isSelf ? 'flex-end' : 'flex-start',
-              position: 'relative',
-              animation: 'fadeIn 0.2s ease-out'
-            }}
-            onMouseLeave={() => {
-              if (activeReactionPicker === msg.id) setActiveReactionPicker(null);
+              position: 'relative'
             }}
           >
             {/* Sender Meta Label */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              marginBottom: '4px',
-              fontSize: '0.73rem',
-              color: 'var(--text-dim)',
-              padding: '0 4px'
-            }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, mb: 0.4, px: 0.5 }}>
               {!isSelf && (
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: '7px',
-                    height: '7px',
+                <Box
+                  sx={{
+                    width: 6,
+                    height: 6,
                     borderRadius: '50%',
-                    background: msg.senderAvatarColor || 'var(--cyan-primary)'
+                    backgroundColor: msg.senderAvatarColor || theme.palette.primary.main
                   }}
                 />
               )}
-              <span style={{ fontWeight: 600, color: isSelf ? 'var(--cyan-primary)' : '#e2e8f0' }}>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: isSelf ? theme.palette.primary.main : theme.palette.text.primary, fontSize: '0.72rem' }}>
                 {isSelf ? 'You' : msg.senderName}
-              </span>
-              <span>•</span>
-              <span>{formatTime(msg.timestamp)}</span>
+              </Typography>
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary, fontSize: '0.72rem' }}>•</Typography>
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary, fontSize: '0.72rem' }}>
+                {formatTime(msg.timestamp)}
+              </Typography>
               {msg.expiresAt && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', color: 'var(--amber-primary)' }}>
-                  <Clock size={11} /> Ephemeral
-                </span>
+                <Chip
+                  icon={<Clock01Icon size={11} color={theme.palette.warning.main} />}
+                  label="Expires"
+                  size="small"
+                  sx={{
+                    height: 18,
+                    borderRadius: '4px',
+                    fontSize: '0.65rem',
+                    backgroundColor: alpha(theme.palette.warning.main, 0.1),
+                    color: theme.palette.warning.light
+                  }}
+                />
               )}
-            </div>
+            </Box>
 
-            {/* Message Bubble Container */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', maxWidth: '80%' }}>
-              {/* Message Content Bubble */}
-              <div
-                style={{
-                  background: isSelf 
-                    ? 'linear-gradient(135deg, rgba(0, 242, 254, 0.18) 0%, rgba(79, 172, 254, 0.22) 100%)' 
-                    : 'rgba(20, 28, 44, 0.85)',
-                  border: isSelf 
-                    ? '1px solid rgba(0, 242, 254, 0.4)' 
-                    : '1px solid var(--border-subtle)',
-                  borderRadius: isSelf ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                  padding: msg.type === 'audio' ? '6px 8px' : '10px 16px',
+            {/* Bubble & Reaction Button */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, maxWidth: '82%' }}>
+              <Box
+                sx={{
+                  backgroundColor: isSelf
+                    ? alpha(theme.palette.primary.main, 0.18)
+                    : alpha(theme.palette.background.paper, 0.85),
+                  border: `1px solid ${isSelf ? alpha(theme.palette.primary.main, 0.35) : theme.palette.divider}`,
+                  borderRadius: isSelf ? '8px 8px 2px 8px' : '8px 8px 8px 2px',
+                  p: msg.type === 'audio' ? 0.6 : '8px 14px',
                   color: '#ffffff',
-                  boxShadow: isSelf ? '0 4px 16px rgba(0, 242, 254, 0.15)' : 'var(--shadow-sm)',
-                  backdropFilter: 'blur(10px)',
-                  position: 'relative'
+                  boxShadow: isSelf ? `0 2px 10px ${alpha(theme.palette.primary.main, 0.12)}` : 'none',
+                  backdropFilter: 'blur(8px)'
                 }}
               >
                 {/* 1. Text Message */}
@@ -313,188 +321,182 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
                 {/* 2. File Attachment */}
                 {msg.type === 'file' && msg.fileData && (
-                  <div>
+                  <Box>
                     {isImage && msg.fileData.blobUrl ? (
-                      <div style={{ marginBottom: '8px' }}>
+                      <Box sx={{ mb: 1 }}>
                         <img
                           src={msg.fileData.blobUrl}
                           alt={msg.fileData.name}
                           style={{
                             maxWidth: '100%',
                             maxHeight: '300px',
-                            borderRadius: '12px',
+                            borderRadius: '6px',
                             objectFit: 'contain',
                             display: 'block'
                           }}
                         />
-                      </div>
+                      </Box>
                     ) : null}
 
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      padding: '8px 12px',
-                      borderRadius: '10px',
-                      border: '1px solid rgba(255, 255, 255, 0.1)'
-                    }}>
-                      <div style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        background: 'rgba(0, 242, 254, 0.1)',
+                    <Box
+                      sx={{
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center'
-                      }}>
-                        {isImage ? <ImageIcon size={18} color="var(--cyan-primary)" /> : <FileText size={18} color="var(--cyan-primary)" />}
-                      </div>
+                        gap: 1.2,
+                        backgroundColor: alpha('#000000', 0.3),
+                        p: 1,
+                        borderRadius: '6px',
+                        border: `1px solid ${alpha('#ffffff', 0.1)}`
+                      }}
+                    >
+                      <Avatar
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: '6px',
+                          backgroundColor: alpha(theme.palette.primary.main, 0.15),
+                          color: theme.palette.primary.main
+                        }}
+                      >
+                        {isImage ? <Image01Icon size={16} /> : <File01Icon size={16} />}
+                      </Avatar>
 
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '0.82rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {msg.fileData.name}
-                        </div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                          {formatFileSize(msg.fileData.size)} • AES-256 E2EE
-                        </div>
-                      </div>
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: theme.palette.text.secondary, fontSize: '0.7rem' }}>
+                          {formatFileSize(msg.fileData.size)}
+                        </Typography>
+                      </Box>
 
                       {msg.fileData.blobUrl && (
-                        <a
+                        <IconButton
+                          component="a"
                           href={msg.fileData.blobUrl}
                           download={msg.fileData.name}
-                          className="btn-cyber-icon"
-                          style={{ width: '32px', height: '32px' }}
-                          title="Download File"
+                          size="small"
+                          sx={{ borderRadius: '6px' }}
                         >
-                          <Download size={15} />
-                        </a>
+                          <Download01Icon size={16} />
+                        </IconButton>
                       )}
-                    </div>
-                  </div>
+                    </Box>
+                  </Box>
                 )}
 
-                {/* 3. Audio Voice Memo */}
+                {/* 3. Voice Memo */}
                 {msg.type === 'audio' && msg.audioData && (
                   <AudioMemoPlayer audioData={msg.audioData} isSelf={isSelf} />
                 )}
-              </div>
+              </Box>
 
-              {/* Reaction Trigger Button */}
-              <button
-                onClick={() => setActiveReactionPicker(activeReactionPicker === msg.id ? null : msg.id)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--text-dim)',
-                  cursor: 'pointer',
-                  padding: '4px',
-                  borderRadius: '50%',
+              {/* Reaction Trigger */}
+              <IconButton
+                size="small"
+                onClick={(e) => setReactionAnchor({ el: e.currentTarget, messageId: msg.id })}
+                sx={{
                   opacity: 0.6,
-                  transition: 'opacity 0.2s'
+                  borderRadius: '6px',
+                  '&:hover': { opacity: 1 },
+                  p: 0.4
                 }}
-                title="React"
               >
-                <Smile size={14} />
-              </button>
-            </div>
+                <SmileIcon size={15} />
+              </IconButton>
+            </Box>
 
-            {/* Quick Emoji Reaction Drawer */}
-            {activeReactionPicker === msg.id && (
-              <div style={{
-                marginTop: '4px',
-                background: 'rgba(12, 17, 28, 0.95)',
-                border: '1px solid var(--border-glow)',
-                borderRadius: '999px',
-                padding: '4px 8px',
-                display: 'flex',
-                gap: '6px',
-                boxShadow: 'var(--shadow-md)',
-                zIndex: 5
-              }}>
-                {COMMON_REACTIONS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    onClick={() => {
-                      onReact(msg.id, emoji);
-                      setActiveReactionPicker(null);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '1rem',
-                      padding: '2px 4px',
-                      transition: 'transform 0.15s'
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.25)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Reaction Badges Display */}
+            {/* Reaction Badges */}
             {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-              <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
-                {Object.entries(msg.reactions).map(([emoji, userIds]) => (
-                  <div
-                    key={emoji}
-                    onClick={() => onReact(msg.id, emoji)}
-                    style={{
-                      background: userIds.includes(selfId) ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                      border: userIds.includes(selfId) ? '1px solid var(--border-glow)' : '1px solid var(--border-subtle)',
-                      borderRadius: '999px',
-                      padding: '2px 8px',
-                      fontSize: '0.75rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      cursor: 'pointer'
+              <Box sx={{ display: 'flex', gap: 0.4, mt: 0.4 }}>
+                {Object.entries(msg.reactions).map(([reactionKey, userIds]) => (
+                  <Chip
+                    key={reactionKey}
+                    icon={getReactionIcon(reactionKey) as React.ReactElement}
+                    label={userIds.length}
+                    size="small"
+                    onClick={() => onReact(msg.id, reactionKey)}
+                    sx={{
+                      height: 22,
+                      borderRadius: '4px',
+                      fontSize: '0.7rem',
+                      backgroundColor: userIds.includes(selfId) ? alpha(theme.palette.primary.main, 0.15) : alpha('#ffffff', 0.05),
+                      border: `1px solid ${userIds.includes(selfId) ? alpha(theme.palette.primary.main, 0.4) : theme.palette.divider}`,
+                      cursor: 'pointer',
+                      px: 0.5
                     }}
-                  >
-                    <span>{emoji}</span>
-                    <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                      {userIds.length}
-                    </span>
-                  </div>
+                  />
                 ))}
-              </div>
+              </Box>
             )}
-          </div>
+          </Box>
         );
       })}
 
       {/* Typing Indicator */}
       {typingPeers.length > 0 && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '6px 12px',
-          background: 'rgba(0, 242, 254, 0.06)',
-          border: '1px solid rgba(0, 242, 254, 0.2)',
-          borderRadius: '999px',
-          width: 'fit-content',
-          fontSize: '0.75rem',
-          color: 'var(--cyan-primary)',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          <div style={{ display: 'flex', gap: '3px' }}>
-            <span className="status-pulse-cyan" style={{ width: '5px', height: '5px' }} />
-            <span className="status-pulse-cyan" style={{ width: '5px', height: '5px', animationDelay: '0.2s' }} />
-            <span className="status-pulse-cyan" style={{ width: '5px', height: '5px', animationDelay: '0.4s' }} />
-          </div>
-          <span>
-            {typingPeers.map((p) => p.name).join(', ')} is typing...
-          </span>
-        </div>
+        <Chip
+          icon={<SparklesIcon size={13} color={theme.palette.primary.main} />}
+          label={`${typingPeers.map((p) => p.name).join(', ')} is typing...`}
+          size="small"
+          sx={{
+            width: 'fit-content',
+            borderRadius: '6px',
+            backgroundColor: alpha(theme.palette.primary.main, 0.08),
+            color: theme.palette.primary.main,
+            border: `1px solid ${alpha(theme.palette.primary.main, 0.25)}`
+          }}
+        />
       )}
 
+      {/* Quick Reaction Popover */}
+      <Popover
+        open={Boolean(reactionAnchor)}
+        anchorEl={reactionAnchor?.el}
+        onClose={() => setReactionAnchor(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        slotProps={{
+          paper: {
+            sx: {
+              p: 0.5,
+              borderRadius: '8px',
+              backgroundColor: alpha(theme.palette.background.paper, 0.96),
+              backdropFilter: 'blur(12px)',
+              border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`
+            }
+          }
+        }}
+      >
+        <Box sx={{ display: 'flex', gap: 0.4 }}>
+          {HUGE_REACTIONS.map((item) => (
+            <IconButton
+              key={item.key}
+              size="small"
+              onClick={() => {
+                if (reactionAnchor) {
+                  onReact(reactionAnchor.messageId, item.key);
+                  setReactionAnchor(null);
+                }
+              }}
+              sx={{
+                borderRadius: '6px',
+                border: 'none',
+                backgroundColor: 'transparent',
+                p: 0.8,
+                '&:hover': {
+                  backgroundColor: alpha(theme.palette.primary.main, 0.15),
+                  color: theme.palette.primary.main
+                }
+              }}
+            >
+              {item.renderIcon(18)}
+            </IconButton>
+          ))}
+        </Box>
+      </Popover>
+
       <div ref={bottomRef} />
-    </div>
+    </Box>
   );
 };

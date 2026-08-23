@@ -1,12 +1,25 @@
 import React, { useState, useRef } from 'react';
-import { 
-  Send, 
-  Paperclip, 
-  Mic, 
-  Smile, 
-  Clock, 
-  X
-} from 'lucide-react';
+import {
+  Box,
+  Paper,
+  InputBase,
+  IconButton,
+  Tooltip,
+  Typography,
+  Menu,
+  MenuItem,
+  Button,
+  Chip,
+  alpha,
+  useTheme
+} from '@mui/material';
+import {
+  SentIcon,
+  Attachment01Icon,
+  Mic01Icon,
+  Clock01Icon,
+  RadioIcon
+} from 'hugeicons-react';
 
 interface MessageInputProps {
   onSendMessage: (text: string, expiresAt?: number) => void;
@@ -15,20 +28,18 @@ interface MessageInputProps {
   onTyping: (isTyping: boolean) => void;
 }
 
-const EMOJI_LIST = ['⚡', '🔥', '🚀', '🔒', '💻', '✨', '👋', '😎', '🎉', '💡', '🤖', '🛡️', '❤️', '👍', '🛸', '🎯'];
-
 export const MessageInput: React.FC<MessageInputProps> = ({
   onSendMessage,
   onSendFile,
   onSendAudioMemo,
   onTyping,
 }) => {
+  const theme = useTheme();
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [ephemeralTimer, setEphemeralTimer] = useState<number | null>(null); // seconds or null
-  const [showTimerMenu, setShowTimerMenu] = useState(false);
+  const [timerAnchor, setTimerAnchor] = useState<HTMLElement | null>(null);
+  const [ephemeralTimer, setEphemeralTimer] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -36,8 +47,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   const recordingTimerRef = useRef<number | null>(null);
   const typingTimeoutRef = useRef<number | null>(null);
 
-  // Handle typing debounce
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setText(e.target.value);
     onTyping(true);
 
@@ -55,10 +65,9 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     onSendMessage(text.trim(), expiresAt);
     setText('');
     onTyping(false);
-    setShowEmojiPicker(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -73,7 +82,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     }
   };
 
-  // Voice Memo Recording
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -112,11 +120,9 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current);
     }
-
     if (!shouldSend) {
       audioChunksRef.current = [];
     }
-
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
@@ -130,276 +136,184 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   };
 
   return (
-    <div style={{
-      padding: '12px 20px 16px',
-      background: 'rgba(8, 12, 20, 0.85)',
-      borderTop: '1px solid var(--border-subtle)',
-      position: 'relative'
-    }}>
-      {/* Hidden File Input */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        style={{ display: 'none' }} 
-        onChange={handleFileChange} 
+    <Box
+      sx={{
+        p: { xs: 1, sm: 1.2 },
+        backgroundColor: alpha(theme.palette.background.paper, 0.8),
+        backdropFilter: 'blur(20px)',
+        borderTop: `1px solid ${theme.palette.divider}`
+      }}
+    >
+      {/* Hidden File Picker */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
       />
 
-      {/* Emoji Picker Popover */}
-      {showEmojiPicker && (
-        <div style={{
-          position: 'absolute',
-          bottom: '75px',
-          left: '20px',
-          background: 'rgba(12, 17, 28, 0.95)',
-          backdropFilter: 'blur(16px)',
-          border: '1px solid var(--border-glow)',
-          borderRadius: '16px',
-          padding: '12px',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(8, 1fr)',
-          gap: '8px',
-          boxShadow: 'var(--shadow-lg)',
-          zIndex: 20
-        }}>
-          {EMOJI_LIST.map((emoji) => (
-            <button
-              key={emoji}
-              onClick={() => {
-                setText((prev) => prev + emoji);
-                setShowEmojiPicker(false);
-              }}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: '1.25rem',
-                cursor: 'pointer',
-                padding: '4px',
-                borderRadius: '8px',
-                transition: 'transform 0.15s'
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.2)')}
-              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Disappearing Timer Menu */}
-      {showTimerMenu && (
-        <div style={{
-          position: 'absolute',
-          bottom: '75px',
-          left: '70px',
-          background: 'rgba(12, 17, 28, 0.95)',
-          border: '1px solid var(--border-glow)',
-          borderRadius: '14px',
-          padding: '8px',
+      {/* Input Outer Card */}
+      <Paper
+        elevation={0}
+        sx={{
           display: 'flex',
-          flexDirection: 'column',
-          gap: '4px',
-          boxShadow: 'var(--shadow-lg)',
-          zIndex: 20,
-          minWidth: '150px'
-        }}>
-          {[
-            { label: 'Off (Permanent)', val: null },
-            { label: '10 Seconds', val: 10 },
-            { label: '30 Seconds', val: 30 },
-            { label: '5 Minutes', val: 300 },
-            { label: '1 Hour', val: 3600 }
-          ].map((item) => (
-            <button
-              key={String(item.val)}
-              onClick={() => {
-                setEphemeralTimer(item.val);
-                setShowTimerMenu(false);
-              }}
-              style={{
-                background: ephemeralTimer === item.val ? 'var(--bg-glass-active)' : 'transparent',
-                border: 'none',
-                color: ephemeralTimer === item.val ? 'var(--cyan-primary)' : 'var(--text-main)',
-                padding: '6px 10px',
-                borderRadius: '8px',
-                textAlign: 'left',
-                fontSize: '0.78rem',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Input Container Box */}
-      <div 
-        className="glass-panel" 
-        style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: '10px',
-          padding: '8px 14px',
-          borderRadius: '16px',
-          background: 'rgba(14, 20, 32, 0.75)',
-          border: '1px solid var(--border-medium)',
-          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)'
+          alignItems: 'center',
+          gap: 1,
+          p: '4px 10px',
+          backgroundColor: alpha(theme.palette.background.default, 0.6),
+          border: `1px solid ${alpha(theme.palette.primary.main, 0.25)}`,
+          borderRadius: '8px',
+          boxShadow: `0 4px 20px ${alpha('#000000', 0.25)}`
         }}
       >
-        {/* If Voice Recording is Active */}
         {isRecording ? (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            width: '100%',
-            padding: '4px 8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{
-                width: '12px',
-                height: '12px',
-                borderRadius: '50%',
-                background: 'var(--rose-primary)',
-                animation: 'pulseGlow 1s infinite alternate'
-              }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#ffffff', fontWeight: 700 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', py: 0.4, px: 0.8 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
+              <RadioIcon size={16} color={theme.palette.error.main} />
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
                 {formatRecordingTime(recordingDuration)}
-              </span>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Recording P2P Audio Memo...
-              </span>
-            </div>
+              </Typography>
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                Recording voice note...
+              </Typography>
+            </Box>
 
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                className="btn-cyber-secondary"
-                onClick={() => stopRecording(false)}
-                style={{ padding: '6px 12px', fontSize: '0.78rem' }}
-              >
-                <X size={14} /> Cancel
-              </button>
-              <button
-                className="btn-cyber-primary"
-                onClick={() => stopRecording(true)}
-                style={{ padding: '6px 14px', fontSize: '0.78rem' }}
-              >
-                <Send size={14} /> Send Voice
-              </button>
-            </div>
-          </div>
+            <Box sx={{ display: 'flex', gap: 0.8 }}>
+              <Button size="small" variant="outlined" color="inherit" onClick={() => stopRecording(false)} sx={{ borderRadius: '6px' }}>
+                Cancel
+              </Button>
+              <Button size="small" variant="contained" color="primary" onClick={() => stopRecording(true)} sx={{ borderRadius: '6px' }}>
+                Send Voice
+              </Button>
+            </Box>
+          </Box>
         ) : (
           <>
-            {/* Action Tools Left */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '4px' }}>
-              {/* Attachment File Trigger */}
-              <button
-                className="btn-cyber-icon"
-                onClick={() => fileInputRef.current?.click()}
-                title="Send File Peer-to-Peer (Any size)"
-                style={{ width: '34px', height: '34px' }}
-              >
-                <Paperclip size={17} />
-              </button>
+            {/* Attachment & Timer Tools */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4 }}>
+              <Tooltip title="Attach file" arrow>
+                <IconButton size="small" onClick={() => fileInputRef.current?.click()} sx={{ borderRadius: '6px' }}>
+                  <Attachment01Icon size={18} />
+                </IconButton>
+              </Tooltip>
 
-              {/* Emoji Trigger */}
-              <button
-                className="btn-cyber-icon"
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                title="Emojis"
-                style={{ width: '34px', height: '34px' }}
-              >
-                <Smile size={17} />
-              </button>
+              <Tooltip title={ephemeralTimer ? `Timer: ${ephemeralTimer}s` : "Self-destruct timer"} arrow>
+                <IconButton
+                  size="small"
+                  onClick={(e) => setTimerAnchor(e.currentTarget)}
+                  sx={{
+                    borderRadius: '6px',
+                    color: ephemeralTimer ? theme.palette.warning.main : undefined,
+                    borderColor: ephemeralTimer ? theme.palette.warning.main : undefined
+                  }}
+                >
+                  <Clock01Icon size={18} />
+                </IconButton>
+              </Tooltip>
+            </Box>
 
-              {/* Disappearing Messages Timer Trigger */}
-              <button
-                className="btn-cyber-icon"
-                onClick={() => setShowTimerMenu(!showTimerMenu)}
-                title={ephemeralTimer ? `Self-destruct: ${ephemeralTimer}s` : "Set Ephemeral Self-Destruct Timer"}
-                style={{
-                  width: '34px',
-                  height: '34px',
-                  color: ephemeralTimer ? 'var(--amber-primary)' : undefined,
-                  borderColor: ephemeralTimer ? 'var(--amber-primary)' : undefined
-                }}
-              >
-                <Clock size={17} />
-              </button>
-            </div>
-
-            {/* Textarea */}
-            <textarea
+            {/* Clean Functional Text Input */}
+            <InputBase
+              multiline
+              maxRows={4}
               value={text}
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
-              placeholder="Type encrypted message (supports **bold**, `code`, ```snippets```)..."
-              rows={1}
-              style={{
+              placeholder="Type a message..."
+              sx={{
                 flex: 1,
-                background: 'transparent',
-                border: 'none',
-                outline: 'none',
+                fontSize: '0.88rem',
                 color: '#ffffff',
-                fontFamily: 'var(--font-primary)',
-                fontSize: '0.9rem',
-                resize: 'none',
-                maxHeight: '120px',
-                padding: '8px 0',
-                lineHeight: '1.4'
+                px: 1,
+                '& textarea': {
+                  lineHeight: 1.4
+                }
               }}
             />
 
-            {/* Right Action Tools (Mic + Send) */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '4px' }}>
-              {/* Voice Memo Button */}
-              <button
-                className="btn-cyber-icon"
-                onClick={startRecording}
-                title="Record P2P Voice Memo"
-                style={{ width: '34px', height: '34px' }}
-              >
-                <Mic size={17} />
-              </button>
+            {/* Mic & Send */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6 }}>
+              <Tooltip title="Voice note" arrow>
+                <IconButton size="small" onClick={startRecording} sx={{ borderRadius: '6px' }}>
+                  <Mic01Icon size={18} />
+                </IconButton>
+              </Tooltip>
 
-              {/* Send Button */}
-              <button
-                className="btn-cyber-primary"
-                onClick={handleSend}
+              <Button
+                variant="contained"
+                color="primary"
                 disabled={!text.trim()}
-                style={{
-                  padding: '8px 14px',
-                  opacity: text.trim() ? 1 : 0.5,
-                  cursor: text.trim() ? 'pointer' : 'default'
+                onClick={handleSend}
+                sx={{
+                  minWidth: 36,
+                  width: 36,
+                  height: 36,
+                  p: 0,
+                  borderRadius: '6px'
                 }}
-                title="Send Message (Enter)"
               >
-                <Send size={16} />
-              </button>
-            </div>
+                <SentIcon size={18} />
+              </Button>
+            </Box>
           </>
         )}
-      </div>
+      </Paper>
 
-      {/* Subtext info */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginTop: '6px',
-        padding: '0 4px',
-        fontSize: '0.7rem',
-        color: 'var(--text-dim)'
-      }}>
-        <span>Direct WebRTC DataChannel • No servers in transit</span>
-        {ephemeralTimer && (
-          <span style={{ color: 'var(--amber-primary)', fontWeight: 600 }}>
-            🔥 Self-destruct active ({ephemeralTimer}s)
-          </span>
-        )}
-      </div>
-    </div>
+      {/* Ephemeral Timer Tag (Only if active) */}
+      {ephemeralTimer && (
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 0.5 }}>
+          <Chip
+            size="small"
+            label={`Self-destruct: ${ephemeralTimer}s`}
+            onDelete={() => setEphemeralTimer(null)}
+            sx={{
+              height: 18,
+              borderRadius: '4px',
+              fontSize: '0.65rem',
+              backgroundColor: alpha(theme.palette.warning.main, 0.12),
+              color: theme.palette.warning.light
+            }}
+          />
+        </Box>
+      )}
+
+      {/* Timer Menu */}
+      <Menu
+        anchorEl={timerAnchor}
+        open={Boolean(timerAnchor)}
+        onClose={() => setTimerAnchor(null)}
+        slotProps={{
+          paper: {
+            sx: {
+              borderRadius: '8px',
+              backgroundColor: alpha(theme.palette.background.paper, 0.96),
+              backdropFilter: 'blur(16px)',
+              border: `1px solid ${theme.palette.divider}`,
+              minWidth: 150
+            }
+          }
+        }}
+      >
+        {[
+          { label: 'Off', val: null },
+          { label: '10 seconds', val: 10 },
+          { label: '30 seconds', val: 30 },
+          { label: '5 minutes', val: 300 },
+          { label: '1 hour', val: 3600 }
+        ].map((item) => (
+          <MenuItem
+            key={String(item.val)}
+            selected={ephemeralTimer === item.val}
+            onClick={() => {
+              setEphemeralTimer(item.val);
+              setTimerAnchor(null);
+            }}
+            sx={{ fontSize: '0.8rem', fontWeight: 600, borderRadius: '4px', mx: 0.5 }}
+          >
+            {item.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </Box>
   );
 };

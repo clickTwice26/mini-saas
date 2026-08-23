@@ -1,5 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { Network, X, Wifi, ShieldCheck, Activity } from 'lucide-react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  Box,
+  Typography,
+  IconButton,
+  alpha,
+  useTheme
+} from '@mui/material';
+import {
+  SecuredNetworkIcon,
+  Cancel01Icon,
+  Shield01Icon,
+  RadioIcon
+} from 'hugeicons-react';
 import type { PeerInfo } from '../types';
 import { p2pEngine } from '../services/p2pEngine';
 
@@ -18,6 +33,7 @@ export const PeerMeshVisualizer: React.FC<PeerMeshVisualizerProps> = ({
   selfName,
   selfColor,
 }) => {
+  const theme = useTheme();
   const [pings, setPings] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -40,154 +56,148 @@ export const PeerMeshVisualizer: React.FC<PeerMeshVisualizerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div 
-        className="glass-panel" 
-        style={{
-          width: '100%',
-          maxWidth: '650px',
-          padding: '24px',
-          background: 'rgba(8, 12, 20, 0.95)',
-          border: '1px solid rgba(0, 242, 254, 0.35)',
-          boxShadow: '0 0 50px rgba(0, 242, 254, 0.25)',
-          position: 'relative'
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '10px',
-              background: 'rgba(0, 242, 254, 0.1)',
-              border: '1px solid rgba(0, 242, 254, 0.3)',
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      maxWidth="sm"
+      fullWidth
+      slotProps={{
+        paper: {
+          sx: {
+            p: { xs: 1, sm: 2 },
+            borderRadius: '12px'
+          }
+        }
+      }}
+    >
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pb: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box
+            sx={{
+              width: 36,
+              height: 36,
+              borderRadius: '8px',
+              backgroundColor: alpha(theme.palette.primary.main, 0.15),
+              color: theme.palette.primary.main,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
-            }}>
-              <Network size={20} color="var(--cyan-primary)" />
-            </div>
-            <div>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff' }}>
-                WebRTC Mesh Topology
-              </h2>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                Live decentralized peer-to-peer data graph
-              </p>
-            </div>
-          </div>
+            }}
+          >
+            <SecuredNetworkIcon size={20} />
+          </Box>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 800 }}>
+              WebRTC Mesh Topology
+            </Typography>
+            <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+              Live decentralized peer-to-peer data graph
+            </Typography>
+          </Box>
+        </Box>
 
-          <button className="btn-cyber-icon" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
+        <IconButton size="small" onClick={onClose} sx={{ borderRadius: '6px' }}>
+          <Cancel01Icon size={16} />
+        </IconButton>
+      </DialogTitle>
 
-        {/* Visualizer Canvas / SVG Area */}
-        <div style={{
-          position: 'relative',
-          width: '100%',
-          height: '320px',
-          background: 'radial-gradient(circle at 50% 50%, rgba(0, 242, 254, 0.08) 0%, rgba(6, 9, 14, 0.8) 70%)',
-          borderRadius: '16px',
-          border: '1px solid var(--border-subtle)',
-          overflow: 'hidden',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}>
-          {/* Background Grid Radar Lines */}
+      <DialogContent sx={{ pt: 2 }}>
+        {/* Radar & Mesh SVG Viewport */}
+        <Box
+          sx={{
+            position: 'relative',
+            width: '100%',
+            height: 300,
+            borderRadius: '10px',
+            backgroundColor: alpha('#020617', 0.9),
+            border: `1px solid ${theme.palette.divider}`,
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            mb: 2.5
+          }}
+        >
+          {/* Radar Circles SVG */}
           <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
-            <circle cx="50%" cy="50%" r="70" fill="none" stroke="rgba(0, 242, 254, 0.12)" strokeDasharray="3 3" />
-            <circle cx="50%" cy="50%" r="120" fill="none" stroke="rgba(168, 85, 247, 0.1)" strokeDasharray="4 4" />
-            
-            {/* Mesh connection lines between center self node and each peer */}
+            <circle cx="50%" cy="50%" r="65" fill="none" stroke={alpha(theme.palette.primary.main, 0.15)} strokeDasharray="3 3" />
+            <circle cx="50%" cy="50%" r="115" fill="none" stroke={alpha(theme.palette.secondary.main, 0.12)} strokeDasharray="4 4" />
+
             {peers.map((peer, idx) => {
               const total = peers.length;
               const angle = (idx / total) * 2 * Math.PI - Math.PI / 2;
-              const radius = 105;
-              // Center is 50%, 50%
+              const radius = 100;
               const px = 50 + (radius / 3.2) * Math.cos(angle);
               const py = 50 + (radius / 1.6) * Math.sin(angle);
 
               return (
                 <g key={peer.id}>
-                  <line 
-                    x1="50%" 
-                    y1="50%" 
-                    x2={`${px}%`} 
-                    y2={`${py}%`} 
-                    stroke="rgba(0, 242, 254, 0.4)" 
+                  <line
+                    x1="50%"
+                    y1="50%"
+                    x2={`${px}%`}
+                    y2={`${py}%`}
+                    stroke={alpha(theme.palette.primary.main, 0.45)}
                     strokeWidth="1.5"
                     strokeDasharray="6 4"
-                  >
-                    <animate attributeName="stroke-dashoffset" from="100" to="0" dur="2s" repeatCount="indefinite" />
-                  </line>
-                  <circle cx={`${px}%`} cy={`${py}%`} r="3" fill="var(--cyan-primary)">
-                    <animate attributeName="opacity" values="0.3;1;0.3" dur="1.5s" repeatCount="indefinite" />
-                  </circle>
+                  />
+                  <circle cx={`${px}%`} cy={`${py}%`} r="3" fill={theme.palette.primary.main} />
                 </g>
               );
             })}
           </svg>
 
-          {/* Center Self Node */}
-          <div style={{
-            position: 'absolute',
-            zIndex: 3,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '6px',
-            transform: 'translate(-50%, -50%)',
-            left: '50%',
-            top: '50%'
-          }}>
-            <div style={{
-              width: '54px',
-              height: '54px',
-              borderRadius: '50%',
-              background: `linear-gradient(135deg, ${selfColor} 0%, #00f2fe 100%)`,
-              border: '3px solid #ffffff',
-              boxShadow: '0 0 25px rgba(0, 242, 254, 0.6)',
+          {/* Self Node */}
+          <Box
+            sx={{
+              position: 'absolute',
+              zIndex: 3,
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 800,
-              fontSize: '1.1rem',
-              color: '#04070d'
-            }}>
-              YOU
-            </div>
-            <div style={{
-              background: 'rgba(0, 0, 0, 0.75)',
-              padding: '2px 8px',
-              borderRadius: '999px',
-              fontSize: '0.72rem',
-              fontWeight: 700,
-              color: '#ffffff',
-              border: '1px solid rgba(255,255,255,0.2)',
-              whiteSpace: 'nowrap'
-            }}>
-              {selfName} (Host Node)
-            </div>
-          </div>
+              gap: 0.5,
+              transform: 'translate(-50%, -50%)',
+              left: '50%',
+              top: '50%'
+            }}
+          >
+            <Box
+              sx={{
+                width: 52,
+                height: 52,
+                borderRadius: '8px',
+                background: `linear-gradient(135deg, ${selfColor} 0%, ${theme.palette.primary.main} 100%)`,
+                border: '2px solid #ffffff',
+                boxShadow: `0 0 25px ${alpha(theme.palette.primary.main, 0.6)}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 800,
+                fontSize: '0.85rem',
+                color: '#080c16'
+              }}
+            >
+              HOST
+            </Box>
+            <Typography variant="caption" sx={{ backgroundColor: alpha('#000000', 0.8), px: 1, py: 0.2, borderRadius: '4px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {selfName}
+            </Typography>
+          </Box>
 
-          {/* Connected Peer Nodes in Orbital ring */}
+          {/* Peer Nodes */}
           {peers.map((peer, idx) => {
             const total = peers.length;
             const angle = (idx / total) * 2 * Math.PI - Math.PI / 2;
-            const radiusX = 170;
-            const radiusY = 95;
+            const radiusX = 160;
+            const radiusY = 90;
             const leftOffset = `calc(50% + ${Math.round(radiusX * Math.cos(angle))}px)`;
             const topOffset = `calc(50% + ${Math.round(radiusY * Math.sin(angle))}px)`;
             const pingVal = pings[peer.id] || 24;
 
             return (
-              <div
+              <Box
                 key={peer.id}
-                style={{
+                sx={{
                   position: 'absolute',
                   left: leftOffset,
                   top: topOffset,
@@ -195,121 +205,61 @@ export const PeerMeshVisualizer: React.FC<PeerMeshVisualizerProps> = ({
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  gap: '4px',
-                  zIndex: 4,
-                  animation: 'fadeIn 0.3s ease-out'
+                  gap: 0.5,
+                  zIndex: 4
                 }}
               >
-                <div style={{
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '50%',
-                  background: peer.avatarColor,
-                  border: '2px solid rgba(255, 255, 255, 0.8)',
-                  boxShadow: `0 0 15px ${peer.avatarColor}88`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 700,
-                  fontSize: '0.85rem',
-                  color: '#ffffff'
-                }}>
+                <Box
+                  sx={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: '8px',
+                    backgroundColor: peer.avatarColor,
+                    border: '2px solid rgba(255, 255, 255, 0.8)',
+                    boxShadow: `0 0 15px ${peer.avatarColor}88`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 700,
+                    fontSize: '0.82rem',
+                    color: '#ffffff'
+                  }}
+                >
                   {peer.name.slice(0, 2).toUpperCase()}
-                </div>
-                <div style={{
-                  background: 'rgba(0, 0, 0, 0.85)',
-                  padding: '2px 8px',
-                  borderRadius: '8px',
-                  fontSize: '0.7rem',
-                  color: '#ffffff',
-                  border: '1px solid rgba(0, 242, 254, 0.3)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  whiteSpace: 'nowrap'
-                }}>
-                  <span>{peer.name}</span>
-                  <span style={{ color: 'var(--emerald-primary)', fontWeight: 700 }}>
-                    {pingVal}ms
-                  </span>
-                </div>
-              </div>
+                </Box>
+                <Box sx={{ backgroundColor: alpha('#000000', 0.85), px: 1, py: 0.3, borderRadius: '4px', display: 'flex', alignItems: 'center', gap: 0.5, border: `1px solid ${theme.palette.divider}` }}>
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>{peer.name}</Typography>
+                  <Typography variant="caption" sx={{ color: theme.palette.success.main, fontWeight: 700 }}>{pingVal}ms</Typography>
+                </Box>
+              </Box>
             );
           })}
+        </Box>
 
-          {/* Empty state if alone in room */}
-          {peers.length === 0 && (
-            <div style={{
-              position: 'absolute',
-              bottom: '16px',
-              background: 'rgba(0, 0, 0, 0.65)',
-              padding: '6px 14px',
-              borderRadius: '999px',
-              fontSize: '0.75rem',
-              color: 'var(--text-muted)',
-              border: '1px solid var(--border-subtle)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}>
-              <Activity size={13} color="var(--cyan-primary)" />
-              <span>Awaiting peers to join mesh... Share Room Code or QR</span>
-            </div>
-          )}
-        </div>
+        {/* 3 Metric Cards */}
+        <Box sx={{ display: 'flex', gap: 1.5 }}>
+          <Box sx={{ flex: 1, p: 1.5, borderRadius: '8px', backgroundColor: alpha(theme.palette.background.default, 0.5), border: `1px solid ${theme.palette.divider}` }}>
+            <Typography variant="caption" sx={{ color: theme.palette.text.secondary, textTransform: 'uppercase', fontSize: '0.68rem' }}>Connected Peers</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 800, color: theme.palette.primary.main }}>{peers.length} Node{peers.length === 1 ? '' : 's'}</Typography>
+          </Box>
 
-        {/* Live Diagnostics & Mesh Stats */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: '12px',
-          marginTop: '16px'
-        }}>
-          <div style={{
-            background: 'rgba(0, 0, 0, 0.3)',
-            padding: '12px',
-            borderRadius: '12px',
-            border: '1px solid var(--border-subtle)'
-          }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-              Connected Mesh Peers
-            </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--cyan-primary)', marginTop: '2px' }}>
-              {peers.length} Nodes
-            </div>
-          </div>
+          <Box sx={{ flex: 1, p: 1.5, borderRadius: '8px', backgroundColor: alpha(theme.palette.background.default, 0.5), border: `1px solid ${theme.palette.divider}` }}>
+            <Typography variant="caption" sx={{ color: theme.palette.text.secondary, textTransform: 'uppercase', fontSize: '0.68rem' }}>Encryption</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: theme.palette.success.main, mt: 0.5 }}>
+              <Shield01Icon size={16} />
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>AES-256 / SRTP</Typography>
+            </Box>
+          </Box>
 
-          <div style={{
-            background: 'rgba(0, 0, 0, 0.3)',
-            padding: '12px',
-            borderRadius: '12px',
-            border: '1px solid var(--border-subtle)'
-          }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-              P2P Protocol & Channel
-            </div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--emerald-primary)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <ShieldCheck size={16} />
-              DTLS / SCTP
-            </div>
-          </div>
-
-          <div style={{
-            background: 'rgba(0, 0, 0, 0.3)',
-            padding: '12px',
-            borderRadius: '12px',
-            border: '1px solid var(--border-subtle)'
-          }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-              Signaling Relay
-            </div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--violet-primary)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Wifi size={16} />
-              BitTorrent DHT
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+          <Box sx={{ flex: 1, p: 1.5, borderRadius: '8px', backgroundColor: alpha(theme.palette.background.default, 0.5), border: `1px solid ${theme.palette.divider}` }}>
+            <Typography variant="caption" sx={{ color: theme.palette.text.secondary, textTransform: 'uppercase', fontSize: '0.68rem' }}>Transit</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: theme.palette.secondary.main, mt: 0.5 }}>
+              <RadioIcon size={16} />
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>Direct P2P</Typography>
+            </Box>
+          </Box>
+        </Box>
+      </DialogContent>
+    </Dialog>
   );
 };

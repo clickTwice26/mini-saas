@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { ThemeProvider, CssBaseline, Box } from '@mui/material';
 import confetti from 'canvas-confetti';
+import { m3Theme } from './theme/m3Theme';
 import type { ChatMessage, PeerInfo, CallState, FileMetadata, AudioMemoData } from './types';
 import { p2pEngine, getDeterministicName, getPeerColor } from './services/p2pEngine';
 import { cryptoService } from './services/cryptoService';
-import { soundService } from './services/soundService';
 import { Header } from './components/Header';
 import { ChatArea } from './components/ChatArea';
 import { MessageInput } from './components/MessageInput';
@@ -62,7 +63,6 @@ export const App: React.FC = () => {
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [isMeshVisualizerOpen, setIsMeshVisualizerOpen] = useState(false);
   const [isRoomLockedOpen, setIsRoomLockedOpen] = useState(false);
-  const [isMuted, setIsMuted] = useState(() => soundService.getIsMuted());
 
   // Incoming Call State
   const [incomingCall, setIncomingCall] = useState<{
@@ -136,13 +136,12 @@ export const App: React.FC = () => {
           if (prev.some((p) => p.id === peerId)) return prev;
           return [...prev, newPeer];
         });
-        soundService.playPeerJoined();
 
         confetti({
           particleCount: 50,
           spread: 60,
           origin: { y: 0.8 },
-          colors: ['#00f2fe', '#4facfe', '#a855f7', '#10b981']
+          colors: ['#38bdf8', '#a78bfa', '#34d399']
         });
       },
 
@@ -154,17 +153,14 @@ export const App: React.FC = () => {
           return { ...prev, remoteStreams: nextRemotes };
         });
         setScreenStreamState((prev) => prev.isBroadcaster ? prev : { active: false, isBroadcaster: false, stream: null });
-        soundService.playPeerLeft();
       },
 
       onRoomLocked: () => {
         setIsRoomLockedOpen(true);
-        soundService.playNuke();
       },
 
       onMessage: (msg: ChatMessage) => {
         setMessages((prev) => [...prev, msg]);
-        soundService.playReceived();
       },
 
       onTyping: (peerId, isTyping) => {
@@ -205,12 +201,11 @@ export const App: React.FC = () => {
 
       onFileComplete: (meta) => {
         setTransferState(null);
-        soundService.playReceived();
         const fileMsg: ChatMessage = {
           id: 'file-' + meta.id,
           senderId: meta.id,
           senderName: 'Peer',
-          senderAvatarColor: 'var(--cyan-primary)',
+          senderAvatarColor: '#38bdf8',
           timestamp: Date.now(),
           type: 'file',
           fileData: meta,
@@ -220,7 +215,6 @@ export const App: React.FC = () => {
       },
 
       onAudioMemo: (audio: AudioMemoData, senderId: string, senderName: string, senderAvatarColor: string) => {
-        soundService.playReceived();
         const audioMsg: ChatMessage = {
           id: 'audio-' + Date.now(),
           senderId,
@@ -236,7 +230,6 @@ export const App: React.FC = () => {
 
       onIncomingCall: (callerId, callerName, mode) => {
         setIncomingCall({ callerId, callerName, mode });
-        soundService.playReceived();
       },
 
       onCallEnded: () => {
@@ -257,18 +250,15 @@ export const App: React.FC = () => {
 
       // Zero-Acceptance Live Screen Stream Reception
       onScreenStreamStart: (stream, _broadcasterId, broadcasterName) => {
-        console.log('[GhostLink] Zero-Acceptance Screen Stream Started from:', broadcasterName);
         setScreenStreamState({
           active: true,
           isBroadcaster: false,
           stream,
           broadcasterName
         });
-        soundService.playReceived();
       },
 
       onScreenStreamEnd: () => {
-        console.log('[GhostLink] Peer ended screen broadcast');
         setScreenStreamState({
           active: false,
           isBroadcaster: false,
@@ -326,7 +316,6 @@ export const App: React.FC = () => {
 
   // Generate completely fresh Room & Key
   const handleGenerateNewRoomAndKey = () => {
-    soundService.playNuke();
     p2pEngine.leaveRoom();
     setMessages([]);
     setPeers([]);
@@ -343,7 +332,6 @@ export const App: React.FC = () => {
   const handleSendMessage = (text: string, expiresAt?: number) => {
     const msg = p2pEngine.sendMessage(text, expiresAt);
     setMessages((prev) => [...prev, msg]);
-    soundService.playSent();
   };
 
   // P2P File sending
@@ -364,7 +352,6 @@ export const App: React.FC = () => {
         setTransferState((prev) => (prev ? { ...prev, progress } : null));
       });
       setMessages((prev) => [...prev, msg]);
-      soundService.playSent();
     } catch (err) {
       console.error('File send error:', err);
     } finally {
@@ -376,7 +363,6 @@ export const App: React.FC = () => {
   const handleSendAudioMemo = async (blob: Blob, duration: number) => {
     const msg = await p2pEngine.sendAudioMemo(blob, duration);
     setMessages((prev) => [...prev, msg]);
-    soundService.playSent();
   };
 
   // Emoji Reactions
@@ -588,11 +574,6 @@ export const App: React.FC = () => {
     });
   };
 
-  const handleToggleMute = () => {
-    const muted = soundService.toggleMute();
-    setIsMuted(muted);
-  };
-
   const handleCopyRoomLink = () => {
     const inviteUrl = `${window.location.origin}${window.location.pathname}#room=${encodeURIComponent(roomId)}&key=${encodeURIComponent(secretKey)}`;
     if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
@@ -611,118 +592,124 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      width: '100vw',
-      position: 'relative',
-      zIndex: 1
-    }}>
-      {/* Header */}
-      <Header
-        roomId={roomId}
-        secretKey={secretKey}
-        peers={peers}
-        isMuted={isMuted}
-        onToggleMute={handleToggleMute}
-        onOpenConnectModal={() => setIsConnectModalOpen(true)}
-        onToggleMeshVisualizer={() => setIsMeshVisualizerOpen(!isMeshVisualizerOpen)}
-        isMeshVisualizerOpen={isMeshVisualizerOpen}
-        onStartCall={handleStartCall}
-        onStartScreenShare={handleStartScreenBroadcast}
-        onPanicNuke={handleGenerateNewRoomAndKey}
-        onCopyRoomLink={handleCopyRoomLink}
-      />
-
-      {/* Main Chat Thread Area */}
-      <main style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        position: 'relative',
-        margin: '0 16px 12px',
-        borderRadius: '24px',
-        background: 'var(--bg-card)',
-        backdropFilter: 'blur(20px)',
-        border: '1px solid var(--border-subtle)',
-        boxShadow: 'var(--shadow-md)'
-      }}>
-        <ChatArea
-          messages={messages}
-          selfId={selfId}
+    <ThemeProvider theme={m3Theme}>
+      <CssBaseline />
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100vh',
+          width: '100vw',
+          backgroundColor: 'background.default',
+          overflow: 'hidden'
+        }}
+      >
+        {/* M3 Header */}
+        <Header
+          roomId={roomId}
+          secretKey={secretKey}
           peers={peers}
-          currentRoomId={roomId}
           onOpenConnectModal={() => setIsConnectModalOpen(true)}
-          onReact={handleReact}
+          onToggleMeshVisualizer={() => setIsMeshVisualizerOpen(!isMeshVisualizerOpen)}
+          isMeshVisualizerOpen={isMeshVisualizerOpen}
+          onStartCall={handleStartCall}
+          onStartScreenShare={handleStartScreenBroadcast}
+          onPanicNuke={handleGenerateNewRoomAndKey}
+          onCopyRoomLink={handleCopyRoomLink}
         />
 
-        <MessageInput
-          onSendMessage={handleSendMessage}
-          onSendFile={handleSendFile}
-          onSendAudioMemo={handleSendAudioMemo}
-          onTyping={(isTyping) => p2pEngine.sendTyping(isTyping)}
+        {/* Main Chat Canvas Card (Crisp 10px radius) */}
+        <Box
+          component="main"
+          sx={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            mx: { xs: 1, sm: 1.5 },
+            mb: { xs: 1, sm: 1.5 },
+            borderRadius: '10px',
+            backgroundColor: 'background.paper',
+            border: '1px solid',
+            borderColor: 'divider',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+          }}
+        >
+          <ChatArea
+            messages={messages}
+            selfId={selfId}
+            peers={peers}
+            currentRoomId={roomId}
+            onOpenConnectModal={() => setIsConnectModalOpen(true)}
+            onReact={handleReact}
+          />
+
+          <MessageInput
+            onSendMessage={handleSendMessage}
+            onSendFile={handleSendFile}
+            onSendAudioMemo={handleSendAudioMemo}
+            onTyping={(isTyping) => p2pEngine.sendTyping(isTyping)}
+          />
+        </Box>
+
+        {/* Connection & QR Modal */}
+        <ConnectionModal
+          isOpen={isConnectModalOpen}
+          onClose={() => setIsConnectModalOpen(false)}
+          currentRoomId={roomId}
+          currentSecretKey={secretKey}
+          onJoinRoom={handleJoinRoom}
+          onGenerateNewRoom={handleGenerateNewRoomAndKey}
         />
-      </main>
 
-      {/* Connection & QR Modal */}
-      <ConnectionModal
-        isOpen={isConnectModalOpen}
-        onClose={() => setIsConnectModalOpen(false)}
-        currentRoomId={roomId}
-        currentSecretKey={secretKey}
-        onJoinRoom={handleJoinRoom}
-        onGenerateNewRoom={handleGenerateNewRoomAndKey}
-      />
-
-      {/* Mesh Topology Visualizer Modal */}
-      <PeerMeshVisualizer
-        isOpen={isMeshVisualizerOpen}
-        onClose={() => setIsMeshVisualizerOpen(false)}
-        peers={peers}
-        selfName={selfName}
-        selfColor={selfColor}
-      />
-
-      {/* Incoming Call Ringing Modal (Only for 2-Way Interactive Calls) */}
-      <IncomingCallModal
-        incomingCall={incomingCall}
-        onAccept={handleAcceptIncomingCall}
-        onDecline={handleDeclineIncomingCall}
-      />
-
-      {/* Zero-Acceptance Live Screen Stream Modal */}
-      {screenStreamState.active && (
-        <ScreenStreamModal
-          stream={screenStreamState.stream}
-          isBroadcaster={screenStreamState.isBroadcaster}
-          broadcasterName={screenStreamState.broadcasterName}
-          onStopBroadcast={handleStopScreenBroadcast}
-          onCloseViewer={() => setScreenStreamState({ active: false, isBroadcaster: false, stream: null })}
+        {/* Mesh Topology Visualizer Modal */}
+        <PeerMeshVisualizer
+          isOpen={isMeshVisualizerOpen}
+          onClose={() => setIsMeshVisualizerOpen(false)}
+          peers={peers}
+          selfName={selfName}
+          selfColor={selfColor}
         />
-      )}
 
-      {/* Room Locked Security Lockdown Modal */}
-      <RoomLockedModal
-        isOpen={isRoomLockedOpen}
-        onGenerateNewRoom={handleGenerateNewRoomAndKey}
-      />
+        {/* Incoming Call Ringing Modal */}
+        <IncomingCallModal
+          incomingCall={incomingCall}
+          onAccept={handleAcceptIncomingCall}
+          onDecline={handleDeclineIncomingCall}
+        />
 
-      {/* Active Interactive Video / Audio Call Modal */}
-      <VideoCallModal
-        callState={callState}
-        peers={peers}
-        selfName={selfName}
-        onToggleMic={handleToggleMic}
-        onToggleCamera={handleToggleCamera}
-        onToggleScreenShare={handleToggleScreenShare}
-        onEndCall={handleEndCall}
-      />
+        {/* Zero-Acceptance Live Screen Stream Modal */}
+        {screenStreamState.active && (
+          <ScreenStreamModal
+            stream={screenStreamState.stream}
+            isBroadcaster={screenStreamState.isBroadcaster}
+            broadcasterName={screenStreamState.broadcasterName}
+            onStopBroadcast={handleStopScreenBroadcast}
+            onCloseViewer={() => setScreenStreamState({ active: false, isBroadcaster: false, stream: null })}
+          />
+        )}
 
-      {/* File Transfer Progress Widget */}
-      <FileProgressWidget transferState={transferState} />
-    </div>
+        {/* Room Locked Security Lockdown Modal */}
+        <RoomLockedModal
+          isOpen={isRoomLockedOpen}
+          onGenerateNewRoom={handleGenerateNewRoomAndKey}
+        />
+
+        {/* Active Interactive Video / Audio Call Modal */}
+        <VideoCallModal
+          callState={callState}
+          peers={peers}
+          selfName={selfName}
+          onToggleMic={handleToggleMic}
+          onToggleCamera={handleToggleCamera}
+          onToggleScreenShare={handleToggleScreenShare}
+          onEndCall={handleEndCall}
+        />
+
+        {/* File Transfer Progress Widget */}
+        <FileProgressWidget transferState={transferState} />
+      </Box>
+    </ThemeProvider>
   );
 };
 

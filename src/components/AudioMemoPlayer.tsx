@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause } from 'lucide-react';
+import { Box, IconButton, Typography, alpha, useTheme } from '@mui/material';
+import {
+  PlayIcon,
+  PauseIcon
+} from 'hugeicons-react';
 import type { AudioMemoData } from '../types';
 
 interface AudioMemoPlayerProps {
@@ -8,6 +12,7 @@ interface AudioMemoPlayerProps {
 }
 
 export const AudioMemoPlayer: React.FC<AudioMemoPlayerProps> = ({ audioData, isSelf }) => {
+  const theme = useTheme();
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(audioData.duration || 0);
@@ -61,68 +66,63 @@ export const AudioMemoPlayer: React.FC<AudioMemoPlayerProps> = ({ audioData, isS
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  const barHeights = [8, 14, 20, 10, 18, 24, 12, 16, 22, 15, 10, 18, 12, 8];
+
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px',
-      background: isSelf ? 'rgba(0, 0, 0, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-      padding: '8px 14px',
-      borderRadius: '16px',
-      minWidth: '220px',
-      border: '1px solid rgba(255, 255, 255, 0.1)'
-    }}>
-      {/* Play/Pause Button */}
-      <button
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1.5,
+        backgroundColor: isSelf ? alpha(theme.palette.background.default, 0.4) : alpha('#ffffff', 0.05),
+        px: 1.5,
+        py: 0.8,
+        borderRadius: '6px',
+        minWidth: 220,
+        border: `1px solid ${alpha(theme.palette.divider, 0.8)}`
+      }}
+    >
+      <IconButton
+        size="small"
         onClick={togglePlay}
-        style={{
-          width: '36px',
-          height: '36px',
-          borderRadius: '50%',
-          border: 'none',
-          background: isSelf ? 'var(--cyan-primary)' : 'var(--violet-primary)',
-          color: '#04070d',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          boxShadow: '0 0 12px rgba(0,242,254,0.3)',
-          transition: 'transform 0.15s ease'
+        sx={{
+          width: 32,
+          height: 32,
+          backgroundColor: isSelf ? theme.palette.primary.main : theme.palette.secondary.main,
+          color: '#080c16',
+          borderRadius: '6px',
+          '&:hover': {
+            backgroundColor: isSelf ? theme.palette.primary.light : theme.palette.secondary.light,
+            transform: 'scale(1.05)'
+          }
         }}
       >
-        {isPlaying ? <Pause size={16} fill="#04070d" /> : <Play size={16} fill="#04070d" style={{ marginLeft: '2px' }} />}
-      </button>
+        {isPlaying ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
+      </IconButton>
 
-      {/* Waveform Visual Bars */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '3px', flex: 1, height: '24px' }}>
-        {[8, 14, 20, 10, 18, 24, 12, 16, 22, 15, 10, 18, 12, 8].map((h, i) => {
-          const activeProgress = (currentTime / (duration || 1)) * 14;
+      {/* Waveform Bars */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4, flex: 1, height: 24 }}>
+        {barHeights.map((h, i) => {
+          const activeProgress = (currentTime / (duration || 1)) * barHeights.length;
           const isPassed = i <= activeProgress;
           return (
-            <div
+            <Box
               key={i}
-              style={{
-                width: '3px',
-                height: `${isPlaying ? Math.max(6, (h * (0.6 + Math.random() * 0.8))) : h}px`,
-                background: isPassed ? 'var(--cyan-primary)' : 'rgba(255, 255, 255, 0.25)',
-                borderRadius: '999px',
+              sx={{
+                width: 3,
+                height: isPlaying ? Math.max(6, h * (0.6 + Math.random() * 0.8)) : h,
+                backgroundColor: isPassed ? theme.palette.primary.main : alpha('#ffffff', 0.25),
+                borderRadius: '2px',
                 transition: 'height 0.15s ease, background-color 0.15s ease'
               }}
             />
           );
         })}
-      </div>
+      </Box>
 
-      {/* Duration Label */}
-      <div style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: '0.75rem',
-        color: 'var(--text-dim)',
-        minWidth: '35px',
-        textAlign: 'right'
-      }}>
+      <Typography variant="caption" sx={{ fontFamily: 'monospace', color: theme.palette.text.secondary, minWidth: 32, textAlign: 'right' }}>
         {formatTime(isPlaying ? currentTime : duration)}
-      </div>
-    </div>
+      </Typography>
+    </Box>
   );
 };

@@ -1,5 +1,17 @@
 import React from 'react';
-import { UploadCloud, DownloadCloud, CheckCircle2 } from 'lucide-react';
+import {
+  Paper,
+  Box,
+  Typography,
+  LinearProgress,
+  alpha,
+  useTheme
+} from '@mui/material';
+import {
+  Upload01Icon,
+  Download01Icon,
+  CheckmarkBadge01Icon
+} from 'hugeicons-react';
 import type { FileMetadata } from '../types';
 
 interface FileProgressWidgetProps {
@@ -11,70 +23,69 @@ interface FileProgressWidgetProps {
 }
 
 export const FileProgressWidget: React.FC<FileProgressWidgetProps> = ({ transferState }) => {
+  const theme = useTheme();
   if (!transferState) return null;
 
   const isDone = transferState.progress >= 100;
 
   return (
-    <div style={{
-      position: 'fixed',
-      bottom: '90px',
-      right: '24px',
-      background: 'rgba(12, 17, 28, 0.95)',
-      backdropFilter: 'blur(16px)',
-      border: '1px solid var(--border-glow)',
-      borderRadius: '16px',
-      padding: '14px 18px',
-      boxShadow: 'var(--shadow-lg)',
-      width: '300px',
-      zIndex: 100,
-      animation: 'fadeIn 0.2s ease-out'
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-        <div style={{
-          width: '32px',
-          height: '32px',
-          borderRadius: '8px',
-          background: isDone ? 'rgba(16, 185, 129, 0.2)' : 'rgba(0, 242, 254, 0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}>
+    <Paper
+      elevation={6}
+      sx={{
+        position: 'fixed',
+        bottom: 90,
+        right: 24,
+        width: 300,
+        p: 2,
+        borderRadius: '8px',
+        backgroundColor: alpha(theme.palette.background.paper, 0.95),
+        backdropFilter: 'blur(16px)',
+        border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`,
+        zIndex: 1200
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
+        <Box
+          sx={{
+            width: 36,
+            height: 36,
+            borderRadius: '6px',
+            backgroundColor: isDone ? alpha(theme.palette.success.main, 0.2) : alpha(theme.palette.primary.main, 0.15),
+            color: isDone ? theme.palette.success.main : theme.palette.primary.main,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
           {isDone ? (
-            <CheckCircle2 size={18} color="var(--emerald-primary)" />
+            <CheckmarkBadge01Icon size={20} />
           ) : transferState.type === 'upload' ? (
-            <UploadCloud size={18} color="var(--cyan-primary)" />
+            <Upload01Icon size={20} />
           ) : (
-            <DownloadCloud size={18} color="var(--cyan-primary)" />
+            <Download01Icon size={20} />
           )}
-        </div>
+        </Box>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="body2" sx={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {transferState.meta.name}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+          </Typography>
+          <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
             {isDone ? 'Transfer Complete' : `${transferState.type === 'upload' ? 'Streaming' : 'Receiving'} ${transferState.progress}%`}
-          </div>
-        </div>
-      </div>
+          </Typography>
+        </Box>
+      </Box>
 
-      {/* Progress Bar */}
-      <div style={{
-        width: '100%',
-        height: '4px',
-        background: 'rgba(255, 255, 255, 0.1)',
-        borderRadius: '999px',
-        overflow: 'hidden'
-      }}>
-        <div style={{
-          width: `${transferState.progress}%`,
-          height: '100%',
-          background: isDone ? 'var(--emerald-primary)' : 'var(--grad-cyan-blue)',
-          borderRadius: '999px',
-          transition: 'width 0.15s ease'
-        }} />
-      </div>
-    </div>
+      <LinearProgress
+        variant="determinate"
+        value={transferState.progress}
+        color={isDone ? "success" : "primary"}
+        sx={{
+          height: 6,
+          borderRadius: '3px',
+          backgroundColor: alpha('#ffffff', 0.1)
+        }}
+      />
+    </Paper>
   );
 };
