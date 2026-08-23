@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import type { ChatMessage, PeerInfo, CallState, FileMetadata, AudioMemoData } from './types';
 import { p2pEngine, getDeterministicName, getPeerColor } from './services/p2pEngine';
@@ -12,14 +12,22 @@ import { VideoCallModal } from './components/VideoCallModal';
 import { FileProgressWidget } from './components/FileProgressWidget';
 
 export const App: React.FC = () => {
-  // Room state
-  const [roomId, setRoomId] = useState<string>(() => {
+  // Extract initial room from URL hash or generate fresh code
+  const getRoomFromHash = () => {
     const hash = window.location.hash;
     if (hash.includes('room=')) {
       const match = hash.match(/room=([^&]+)/);
-      if (match && match[1]) return decodeURIComponent(match[1]);
+      if (match && match[1]) {
+        return decodeURIComponent(match[1]).trim().toUpperCase();
+      }
     }
-    // Generate memorable room code default
+    return null;
+  };
+
+  const [roomId, setRoomId] = useState<string>(() => {
+    const fromHash = getRoomFromHash();
+    if (fromHash) return fromHash;
+
     const prefixes = ['NEXUS', 'CYBER', 'SOLAR', 'GHOST', 'SHADOW', 'QUANTUM', 'HYPER', 'PULSE'];
     const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
     const num = Math.floor(1000 + Math.random() * 9000);
@@ -54,13 +62,22 @@ export const App: React.FC = () => {
   const selfName = p2pEngine.myName;
   const selfColor = p2pEngine.myColor;
   const selfId = p2pEngine.selfId;
+  const currentActiveRoomRef = useRef<string>('');
 
-  // Initialize P2P Room Connection
+  // Connect to P2P Room
   const initP2P = useCallback((targetRoomId: string) => {
-    window.location.hash = `room=${encodeURIComponent(targetRoomId)}`;
+    const cleanId = targetRoomId.trim().toUpperCase();
+    if (!cleanId) return;
+
+    if (currentActiveRoomRef.current === cleanId && p2pEngine.isConnected()) {
+      return;
+    }
+
+    currentActiveRoomRef.current = cleanId;
+    window.history.replaceState(null, '', `#room=${encodeURIComponent(cleanId)}`);
     setPeers([]);
 
-    p2pEngine.connectToRoom(targetRoomId, {
+    p2pEngine.connectToRoom(cleanId, {
       onPeerJoin: (peerId) => {
         const newPeer: PeerInfo = {
           id: peerId,
@@ -76,8 +93,8 @@ export const App: React.FC = () => {
 
         // Celebration Confetti!
         confetti({
-          particleCount: 50,
-          spread: 60,
+          particleCount: 60,
+          spread: 70,
           origin: { y: 0.8 },
           colors: ['#00f2fe', '#4facfe', '#a855f7', '#10b981']
         });
@@ -178,13 +195,27 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  // Connect on mount or room ID change
+  // Connect on room change
   useEffect(() => {
     initP2P(roomId);
     return () => {
       p2pEngine.leaveRoom();
     };
   }, [roomId, initP2P]);
+
+  // Listen to hash change from external sources
+  useEffect(() => {
+    const handleHashChange = () => {
+      const fromHash = getRoomFromHash();
+      if (fromHash && fromHash !== currentActiveRoomRef.current) {
+        setMessages([]);
+        setPeers([]);
+        setRoomId(fromHash);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   // Ephemeral Messages self-destruct cleaner
   useEffect(() => {
@@ -202,6 +233,7 @@ export const App: React.FC = () => {
     const cleanId = newRoomId.trim().toUpperCase();
     if (cleanId && cleanId !== roomId) {
       setMessages([]);
+      setPeers([]);
       setRoomId(cleanId);
     }
   };
@@ -382,8 +414,19 @@ export const App: React.FC = () => {
 
   const handleCopyRoomLink = () => {
     const inviteUrl = `${window.location.origin}${window.location.pathname}#room=${encodeURIComponent(roomId)}`;
-    navigator.clipboard.writeText(inviteUrl);
-    setIsConnectModalOpen(true);
+    if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
+      navigator.share({
+        title: 'Join my GhostLink P2P Room',
+        text: `Connect to my encrypted P2P room #${roomId}`,
+        url: inviteUrl
+      }).catch(() => {
+        navigator.clipboard.writeText(inviteUrl);
+        setIsConnectModalOpen(true);
+      });
+    } else {
+      navigator.clipboard.writeText(inviteUrl);
+      setIsConnectModalOpen(true);
+    }
   };
 
   return (

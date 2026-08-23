@@ -1,4 +1,4 @@
-import { joinRoom, selfId } from 'trystero';
+import { joinRoom, selfId } from '@trystero-p2p/nostr';
 import type { ChatMessage, FileMetadata, AudioMemoData } from '../types';
 
 export interface P2PEvents {
@@ -43,6 +43,29 @@ export const getDeterministicName = (id: string): string => {
 
 const CHUNK_SIZE = 16 * 1024; // 16KB WebRTC chunk size for reliable transmission
 
+// Global high-availability STUN ICE servers for Mobile Cellular & WiFi NAT traversal
+const DEFAULT_ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' }
+];
+
+// Standard Port 443 High-Uptime Nostr Relays
+const DEFAULT_NOSTR_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.snort.social',
+  'wss://relay.primal.net',
+  'wss://eden.nostr.land',
+  'wss://nostr.mom',
+  'wss://relay.nostr.band',
+  'wss://purplepag.es',
+  'wss://nostr-pub.wellorder.net'
+];
+
 class P2PEngine {
   public selfId: string = selfId;
   public myName: string = '';
@@ -51,6 +74,7 @@ class P2PEngine {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private room: any = null;
   private events: P2PEvents | null = null;
+  private connectedPeers: Set<string> = new Set();
 
   // In-memory received chunks accumulator: fileId -> { chunks: Uint8Array[], received: number, meta: FileMetadata }
   private incomingFiles: Map<string, {
@@ -86,18 +110,40 @@ class P2PEngine {
     localStorage.setItem('ghostlink_username', name);
   }
 
+  public isConnected(): boolean {
+    return this.room !== null;
+  }
+
+  public getConnectedPeerCount(): number {
+    return this.connectedPeers.size;
+  }
+
   public connectToRoom(roomId: string, events: P2PEvents) {
+    const normalizedRoom = roomId.trim().toLowerCase();
+
+    if (this.room && this.currentRoomId === normalizedRoom) {
+      console.log('[GhostLink P2P] Already active in room:', normalizedRoom);
+      return;
+    }
+
     if (this.room) {
       this.leaveRoom();
     }
 
-    this.currentRoomId = roomId;
+    this.currentRoomId = normalizedRoom;
     this.events = events;
+    this.connectedPeers.clear();
 
-    const normalizedRoom = roomId.trim().toLowerCase();
     const config = {
-      appId: 'ghostlink-p2p-saas-v1'
+      appId: 'ghostlink-mesh-v4',
+      relayUrls: DEFAULT_NOSTR_RELAYS,
+      rtcConfig: {
+        iceServers: DEFAULT_ICE_SERVERS,
+        iceCandidatePoolSize: 10
+      }
     };
+
+    console.log('[GhostLink P2P] Connecting to decentralized mesh room:', normalizedRoom, 'as', this.selfId);
 
     try {
       this.room = joinRoom(config, normalizedRoom);
@@ -122,10 +168,14 @@ class P2PEngine {
 
       // Handle Peer Life Cycle
       this.room.onPeerJoin((peerId: string) => {
+        console.log('[GhostLink P2P] Peer connected to mesh:', peerId);
+        this.connectedPeers.add(peerId);
         this.events?.onPeerJoin(peerId);
       });
 
       this.room.onPeerLeave((peerId: string) => {
+        console.log('[GhostLink P2P] Peer left mesh:', peerId);
+        this.connectedPeers.delete(peerId);
         this.events?.onPeerLeave(peerId);
       });
 
@@ -208,7 +258,7 @@ class P2PEngine {
       });
 
     } catch (err) {
-      console.error('Error connecting to WebRTC mesh room:', err);
+      console.error('[GhostLink P2P] Error connecting to WebRTC mesh room:', err);
     }
   }
 
@@ -221,7 +271,7 @@ class P2PEngine {
       text,
       timestamp: Date.now(),
       type: 'text',
-      status: 'sent',
+      status: this.connectedPeers.size > 0 ? 'delivered' : 'sent',
       expiresAt
     };
 
@@ -271,7 +321,7 @@ class P2PEngine {
         duration,
         mimeType: blob.type
       },
-      status: 'sent'
+      status: this.connectedPeers.size > 0 ? 'delivered' : 'sent'
     };
   }
 
@@ -331,7 +381,7 @@ class P2PEngine {
         ...meta,
         progress: 100
       },
-      status: 'sent'
+      status: this.connectedPeers.size > 0 ? 'delivered' : 'sent'
     };
   }
 
@@ -367,6 +417,7 @@ class P2PEngine {
       }
       this.room = null;
     }
+    this.connectedPeers.clear();
     this.incomingFiles.clear();
     this.currentRoomId = '';
   }

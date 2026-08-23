@@ -131,6 +131,43 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       gap: '16px',
       position: 'relative'
     }}>
+      {/* Live Peer Status Indicator Bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '8px 16px',
+        borderRadius: '12px',
+        background: peers.length > 0 ? 'rgba(16, 185, 129, 0.12)' : 'rgba(0, 242, 254, 0.08)',
+        border: peers.length > 0 ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(0, 242, 254, 0.25)',
+        fontSize: '0.78rem',
+        animation: 'fadeIn 0.2s ease-out'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span className={peers.length > 0 ? "status-pulse" : "status-pulse-cyan"} />
+          <span style={{ fontWeight: 700, color: peers.length > 0 ? 'var(--emerald-primary)' : 'var(--cyan-primary)' }}>
+            {peers.length > 0 
+              ? `⚡ ${peers.length} ${peers.length === 1 ? 'Peer' : 'Peers'} Connected via WebRTC P2P` 
+              : `📡 Awaiting peer in Room #${currentRoomId.toUpperCase()}...`}
+          </span>
+          {peers.length === 0 && (
+            <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>
+              (Scan QR code on your mobile or companion browser to pair)
+            </span>
+          )}
+        </div>
+
+        {peers.length === 0 && (
+          <button
+            onClick={onOpenConnectModal}
+            className="btn-cyber-primary"
+            style={{ padding: '4px 10px', fontSize: '0.72rem' }}
+          >
+            Show QR Code
+          </button>
+        )}
+      </div>
+
       {/* Welcome / Empty Room Banner */}
       {messages.length === 0 && (
         <div style={{
