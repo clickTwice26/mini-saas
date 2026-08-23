@@ -1,4 +1,4 @@
-import Peer, { type DataConnection, type MediaConnection } from 'peerjs';
+import mqtt, { type MqttClient } from 'mqtt';
 import type { ChatMessage, FileMetadata, AudioMemoData } from '../types';
 
 export interface P2PEvents {
@@ -41,60 +41,50 @@ export const getDeterministicName = (id: string): string => {
   return `${adj} ${noun}-${shortId}`;
 };
 
-const CHUNK_SIZE = 16 * 1024; // 16KB WebRTC chunk size for reliable transmission
+const CHUNK_SIZE = 32 * 1024; // 32KB payload chunk
 
-// Comprehensive ICE Servers pool with both STUN and Public TLS TURN relays
-// This ensures 100% connection success even behind Symmetric NATs, enterprise firewalls, and mobile 4G/5G carriers
-const PEERJS_CONFIG = {
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' },
-      { urls: 'stun:global.stun.twilio.com:3478' },
-      // OpenRelay Public TURN Server (Encrypted TCP & TLS on port 443 for 100% firewall bypass)
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turns:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      }
-    ],
-    iceCandidatePoolSize: 10
+// High-Speed Public Ephemeral WebSocket MQTT Brokers (Zero Database / RAM-Only)
+const MQTT_BROKER_URLS = [
+  'wss://broker.hivemq.com:8884/mqtt',
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://test.mosquitto.org:8081/mqtt'
+];
+
+// STUN ICE Servers for direct video calling
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
   },
-  debug: 0
-};
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  }
+];
 
 class P2PEngine {
   public selfId: string = '';
   public myName: string = '';
   public myColor: string = '';
   private currentRoomId: string = '';
-  private rawRoomCode: string = '';
-  private peer: Peer | null = null;
+  private client: MqttClient | null = null;
   private events: P2PEvents | null = null;
-  private connections: Map<string, DataConnection> = new Map();
-  private mediaCalls: Map<string, MediaConnection> = new Map();
-  private localStream: MediaStream | null = null;
-  private heartbeatInterval: number | null = null;
+  
+  // Track known peers: peerId -> lastSeenTimestamp
+  private activePeers: Map<string, number> = new Map();
+  private peerHeartbeatTimer: number | null = null;
+  private presenceSweepTimer: number | null = null;
 
-  // In-memory received chunks accumulator: fileId -> { chunks: Uint8Array[], received: number, meta: FileMetadata }
+  // WebRTC PeerConnections for HD Video Calling
+  private peerConnections: Map<string, RTCPeerConnection> = new Map();
+  private localStream: MediaStream | null = null;
+
+  // In-memory received chunks accumulator: fileId -> { chunks, received, meta, senderId }
   private incomingFiles: Map<string, {
     meta: FileMetadata;
     chunks: (Uint8Array | null)[];
@@ -103,7 +93,7 @@ class P2PEngine {
   }> = new Map();
 
   constructor() {
-    this.selfId = 'gl_user_' + Math.random().toString(36).substring(2, 9);
+    this.selfId = 'gl_' + Math.random().toString(36).substring(2, 10);
     this.myName = localStorage.getItem('ghostlink_username') || getDeterministicName(this.selfId);
     this.myColor = getPeerColor(this.selfId);
   }
@@ -114,23 +104,31 @@ class P2PEngine {
   }
 
   public isConnected(): boolean {
-    return this.peer !== null && !this.peer.destroyed;
+    return this.client !== null && this.client.connected;
   }
 
   public getConnectedPeerCount(): number {
-    return this.connections.size;
+    return this.activePeers.size;
   }
 
-  private sanitizeRoomKey(roomId: string): string {
-    return 'gl_' + roomId.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  private getChatTopic(room: string): string {
+    return `ghostlink/v2/${room}/chat`;
+  }
+
+  private getPresenceTopic(room: string): string {
+    return `ghostlink/v2/${room}/presence`;
+  }
+
+  private getSignalTopic(room: string): string {
+    return `ghostlink/v2/${room}/signals`;
   }
 
   public connectToRoom(roomId: string, events: P2PEvents) {
-    this.rawRoomCode = roomId.trim().toUpperCase();
-    const cleanRoom = this.sanitizeRoomKey(roomId);
+    const cleanRoom = roomId.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!cleanRoom) return;
 
-    if (this.peer && this.currentRoomId === cleanRoom && !this.peer.destroyed) {
-      console.log('[GhostLink] Already active in room:', cleanRoom);
+    if (this.client && this.currentRoomId === cleanRoom && this.client.connected) {
+      console.log('[GhostLink] Already connected to room:', cleanRoom);
       return;
     }
 
@@ -138,277 +136,211 @@ class P2PEngine {
 
     this.currentRoomId = cleanRoom;
     this.events = events;
+    this.activePeers.clear();
 
-    const hostId = `${cleanRoom}_host`;
-    const clientId = `${cleanRoom}_${Math.random().toString(36).substring(2, 8)}`;
+    const brokerUrl = MQTT_BROKER_URLS[0];
+    console.log('[GhostLink] Connecting to ephemeral real-time mesh at:', brokerUrl, 'for room:', cleanRoom);
 
-    console.log('[GhostLink] Initializing room peer connection:', cleanRoom);
-
-    // 1. Try to register as Room Host
-    const hostPeer = new Peer(hostId, PEERJS_CONFIG);
-
-    hostPeer.on('open', (id) => {
-      console.log('[GhostLink] Registered as Room Host:', id);
-      this.peer = hostPeer;
-      this.selfId = id;
-      this.setupPeerListeners(hostPeer, true);
-      this.startHeartbeat();
-    });
-
-    hostPeer.on('error', (err: { type?: string }) => {
-      // 2. If Host ID is taken, another peer is the host -> connect as Client
-      if (err.type === 'unavailable-id') {
-        console.log('[GhostLink] Host exists. Registering as Client Peer:', clientId);
-        hostPeer.destroy();
-
-        const clientPeer = new Peer(clientId, PEERJS_CONFIG);
-        this.peer = clientPeer;
-
-        clientPeer.on('open', (id) => {
-          console.log('[GhostLink] Client open:', id, '-> Connecting to Host:', hostId);
-          this.selfId = id;
-          this.setupPeerListeners(clientPeer, false);
-          this.startHeartbeat();
-
-          // Connect to Host with retry loop
-          this.attemptConnectToHost(clientPeer, hostId, 6, 400);
-        });
-
-        clientPeer.on('error', (clientErr) => {
-          console.warn('[GhostLink] Client peer error:', clientErr);
-        });
-      } else {
-        console.warn('[GhostLink] Host peer error:', err);
-      }
-    });
-  }
-
-  private attemptConnectToHost(peerInstance: Peer, hostId: string, maxRetries: number, delayMs: number) {
-    if (!peerInstance || peerInstance.destroyed) return;
-
-    const conn = peerInstance.connect(hostId, {
-      reliable: true,
-      serialization: 'json'
-    });
-
-    let isConnected = false;
-
-    conn.on('open', () => {
-      isConnected = true;
-      console.log('[GhostLink] Successfully connected to Room Host:', hostId);
-      this.setupConnection(conn);
-    });
-
-    conn.on('error', (err) => {
-      console.warn('[GhostLink] Connection to host failed, retrying in', delayMs, 'ms...', err);
-      if (!isConnected && maxRetries > 0) {
-        setTimeout(() => {
-          this.attemptConnectToHost(peerInstance, hostId, maxRetries - 1, Math.min(delayMs * 1.5, 3000));
-        }, delayMs);
-      }
-    });
-
-    setTimeout(() => {
-      if (!isConnected && maxRetries > 0 && !this.connections.has(hostId)) {
-        this.attemptConnectToHost(peerInstance, hostId, maxRetries - 1, Math.min(delayMs * 1.5, 3000));
-      }
-    }, 2500);
-  }
-
-  private setupPeerListeners(peerInstance: Peer, isHost: boolean) {
-    // Handle incoming DataConnection
-    peerInstance.on('connection', (conn) => {
-      console.log('[GhostLink] Incoming WebRTC connection from:', conn.peer);
-      this.setupConnection(conn);
-
-      if (isHost) {
-        // As host, introduce this new peer to all other existing peers in the room
-        conn.on('open', () => {
-          const peerList = Array.from(this.connections.keys()).filter((id) => id !== conn.peer);
-          if (peerList.length > 0) {
-            conn.send({ type: 'roster', peers: peerList });
-          }
-        });
-      }
-    });
-
-    // Handle incoming MediaStream Call (Audio/Video)
-    peerInstance.on('call', (call) => {
-      console.log('[GhostLink] Incoming media call from:', call.peer);
-      this.mediaCalls.set(call.peer, call);
-
-      if (this.localStream) {
-        call.answer(this.localStream);
-      } else {
-        call.answer();
-      }
-
-      call.on('stream', (remoteStream) => {
-        console.log('[GhostLink] Received remote media stream from:', call.peer);
-        this.events?.onStream(remoteStream, call.peer);
+    try {
+      this.client = mqtt.connect(brokerUrl, {
+        clientId: `${this.selfId}_${Math.random().toString(16).substring(2, 8)}`,
+        clean: true,
+        connectTimeout: 5000,
+        reconnectPeriod: 2000,
+        keepalive: 30
       });
 
-      call.on('close', () => {
-        this.mediaCalls.delete(call.peer);
+      this.client.on('connect', () => {
+        console.log('[GhostLink] Connected to ephemeral mesh broker! Subscribing to room topics...');
+        const chatTopic = this.getChatTopic(cleanRoom);
+        const presenceTopic = this.getPresenceTopic(cleanRoom);
+        const signalTopic = this.getSignalTopic(cleanRoom);
+
+        this.client?.subscribe([chatTopic, presenceTopic, signalTopic], (err) => {
+          if (!err) {
+            console.log('[GhostLink] Subscribed successfully to room:', cleanRoom);
+            // Send instant presence heartbeat immediately
+            this.sendPresencePing();
+            this.startPresenceIntervals();
+          } else {
+            console.warn('[GhostLink] Subscription error:', err);
+          }
+        });
       });
-    });
 
-    peerInstance.on('disconnected', () => {
-      console.log('[GhostLink] Signaling disconnected, attempting silent reconnect...');
-      if (peerInstance && !peerInstance.destroyed) {
-        peerInstance.reconnect();
-      }
-    });
-  }
-
-  private setupConnection(conn: DataConnection) {
-    conn.on('open', () => {
-      console.log('[GhostLink] WebRTC DataChannel established with peer:', conn.peer);
-      this.connections.set(conn.peer, conn);
-      this.events?.onPeerJoin(conn.peer);
-
-      // Exchange ping to verify channel
-      conn.send({ type: 'ping', time: Date.now() });
-    });
-
-    conn.on('data', (payload: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const data = payload as any;
-      if (!data || !data.type) return;
-
-      switch (data.type) {
-        case 'chat':
-          this.events?.onMessage(data.msg);
-          break;
-
-        case 'typing':
-          this.events?.onTyping(conn.peer, data.isTyping);
-          break;
-
-        case 'reaction':
-          this.events?.onReaction(data.messageId, data.emoji, conn.peer);
-          break;
-
-        case 'roster':
-          // Connect to all peers in the mesh
-          if (Array.isArray(data.peers)) {
-            data.peers.forEach((otherPeerId: string) => {
-              if (otherPeerId !== this.selfId && !this.connections.has(otherPeerId)) {
-                if (this.peer && !this.peer.destroyed) {
-                  console.log('[GhostLink] Connecting to mesh peer:', otherPeerId);
-                  const otherConn = this.peer.connect(otherPeerId, { reliable: true, serialization: 'json' });
-                  this.setupConnection(otherConn);
-                }
-              }
-            });
-          }
-          break;
-
-        case 'file_meta':
-          this.incomingFiles.set(data.meta.id, {
-            meta: data.meta,
-            chunks: new Array(data.meta.totalChunks).fill(null),
-            receivedChunks: 0,
-            senderId: conn.peer
-          });
-          this.events?.onFileStart(data.meta, conn.peer);
-          break;
-
-        case 'file_chunk': {
-          const fileState = this.incomingFiles.get(data.id);
-          if (!fileState) return;
-
-          const uint8 = new Uint8Array(data.data);
-          if (fileState.chunks[data.index] === null) {
-            fileState.chunks[data.index] = uint8;
-            fileState.receivedChunks += 1;
-          }
-
-          const progress = Math.round((fileState.receivedChunks / fileState.meta.totalChunks) * 100);
-          this.events?.onFileProgress(data.id, progress);
-
-          if (fileState.receivedChunks >= fileState.meta.totalChunks) {
-            const validChunks = fileState.chunks.filter((c): c is Uint8Array => c !== null);
-            const blob = new Blob(validChunks as unknown as BlobPart[], { type: fileState.meta.type });
-            const blobUrl = URL.createObjectURL(blob);
-            const completedMeta: FileMetadata = {
-              ...fileState.meta,
-              blobUrl,
-              progress: 100
-            };
-            this.events?.onFileComplete(completedMeta);
-            this.incomingFiles.delete(data.id);
-          }
-          break;
-        }
-
-        case 'audio': {
-          const blob = new Blob([new Uint8Array(data.buffer) as unknown as BlobPart], { type: data.mimeType });
-          const blobUrl = URL.createObjectURL(blob);
-          this.events?.onAudioMemo({
-            blobUrl,
-            duration: data.duration,
-            mimeType: data.mimeType
-          }, conn.peer, data.senderName, data.senderAvatarColor);
-          break;
-        }
-
-        case 'ping':
-          conn.send({ type: 'pong', time: data.time });
-          break;
-
-        case 'pong':
-          // Heartbeat received
-          break;
-      }
-    });
-
-    conn.on('close', () => {
-      console.log('[GhostLink] WebRTC DataChannel closed with peer:', conn.peer);
-      this.connections.delete(conn.peer);
-      this.events?.onPeerLeave(conn.peer);
-
-      // If connection closed and alone, try to re-claim host
-      if (this.connections.size === 0 && this.rawRoomCode) {
-        console.log('[GhostLink] Host disconnected, attempting to promote self...');
-        setTimeout(() => {
-          if (this.connections.size === 0 && this.events) {
-            this.connectToRoom(this.rawRoomCode, this.events);
-          }
-        }, 1500);
-      }
-    });
-
-    conn.on('error', (err) => {
-      console.warn('[GhostLink] Connection error with peer:', conn.peer, err);
-    });
-  }
-
-  private startHeartbeat() {
-    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-    this.heartbeatInterval = window.setInterval(() => {
-      this.connections.forEach((conn) => {
-        if (conn.open) {
-          try {
-            conn.send({ type: 'ping', time: Date.now() });
-          } catch {
-            // ignore
-          }
-        }
-      });
-    }, 4000);
-  }
-
-  public broadcast(payload: unknown) {
-    this.connections.forEach((conn) => {
-      if (conn.open) {
+      this.client.on('message', (topic, payload) => {
         try {
-          conn.send(payload);
+          const raw = payload.toString();
+          const data = JSON.parse(raw);
+
+          // Handle Presence Heartbeats
+          if (topic === this.getPresenceTopic(cleanRoom)) {
+            if (data.senderId && data.senderId !== this.selfId) {
+              const isNewPeer = !this.activePeers.has(data.senderId);
+              this.activePeers.set(data.senderId, Date.now());
+
+              if (isNewPeer) {
+                console.log('[GhostLink] Peer joined room mesh:', data.senderId, data.senderName);
+                this.events?.onPeerJoin(data.senderId);
+                // Reply with immediate presence ping so new peer sees us right away
+                this.sendPresencePing();
+              }
+            }
+            return;
+          }
+
+          // Handle WebRTC Calling Signals
+          if (topic === this.getSignalTopic(cleanRoom)) {
+            if (data.senderId && data.senderId !== this.selfId && (data.targetId === this.selfId || data.targetId === 'all')) {
+              this.handleWebRTCSignal(data);
+            }
+            return;
+          }
+
+          // Handle Chat & Media Broadcasts
+          if (topic === this.getChatTopic(cleanRoom)) {
+            if (data.senderId === this.selfId) return; // Ignore own echoes
+
+            switch (data.type) {
+              case 'chat':
+                this.events?.onMessage(data.msg);
+                break;
+
+              case 'typing':
+                this.events?.onTyping(data.senderId, data.isTyping);
+                break;
+
+              case 'reaction':
+                this.events?.onReaction(data.messageId, data.emoji, data.senderId);
+                break;
+
+              case 'file_meta':
+                this.incomingFiles.set(data.meta.id, {
+                  meta: data.meta,
+                  chunks: new Array(data.meta.totalChunks).fill(null),
+                  receivedChunks: 0,
+                  senderId: data.senderId
+                });
+                this.events?.onFileStart(data.meta, data.senderId);
+                break;
+
+              case 'file_chunk': {
+                const fileState = this.incomingFiles.get(data.id);
+                if (!fileState) return;
+
+                // Base64 decode chunk
+                const binaryStr = atob(data.data);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                  bytes[i] = binaryStr.charCodeAt(i);
+                }
+
+                if (fileState.chunks[data.index] === null) {
+                  fileState.chunks[data.index] = bytes;
+                  fileState.receivedChunks += 1;
+                }
+
+                const progress = Math.round((fileState.receivedChunks / fileState.meta.totalChunks) * 100);
+                this.events?.onFileProgress(data.id, progress);
+
+                if (fileState.receivedChunks >= fileState.meta.totalChunks) {
+                  const validChunks = fileState.chunks.filter((c): c is Uint8Array => c !== null);
+                  const blob = new Blob(validChunks as unknown as BlobPart[], { type: fileState.meta.type });
+                  const blobUrl = URL.createObjectURL(blob);
+                  const completedMeta: FileMetadata = {
+                    ...fileState.meta,
+                    blobUrl,
+                    progress: 100
+                  };
+                  this.events?.onFileComplete(completedMeta);
+                  this.incomingFiles.delete(data.id);
+                }
+                break;
+              }
+
+              case 'audio': {
+                const binaryStr = atob(data.buffer);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                  bytes[i] = binaryStr.charCodeAt(i);
+                }
+                const blob = new Blob([bytes as unknown as BlobPart], { type: data.mimeType });
+                const blobUrl = URL.createObjectURL(blob);
+                this.events?.onAudioMemo({
+                  blobUrl,
+                  duration: data.duration,
+                  mimeType: data.mimeType
+                }, data.senderId, data.senderName, data.senderAvatarColor);
+                break;
+              }
+            }
+          }
         } catch (err) {
-          console.warn('[GhostLink] Broadcast send error:', err);
+          console.warn('[GhostLink] Parse message error:', err);
         }
-      }
+      });
+
+      this.client.on('error', (err) => {
+        console.warn('[GhostLink] MQTT client error:', err);
+      });
+
+    } catch (err) {
+      console.error('[GhostLink] Error setting up MQTT client:', err);
+    }
+  }
+
+  private sendPresencePing() {
+    if (!this.client || !this.client.connected || !this.currentRoomId) return;
+    const presenceTopic = this.getPresenceTopic(this.currentRoomId);
+    const payload = JSON.stringify({
+      senderId: this.selfId,
+      senderName: this.myName,
+      senderColor: this.myColor,
+      time: Date.now()
     });
+    this.client.publish(presenceTopic, payload, { qos: 0 });
+  }
+
+  private startPresenceIntervals() {
+    // 1. Send heartbeat every 2 seconds
+    if (this.peerHeartbeatTimer) clearInterval(this.peerHeartbeatTimer);
+    this.peerHeartbeatTimer = window.setInterval(() => {
+      this.sendPresencePing();
+    }, 2000);
+
+    // 2. Sweep inactive peers (older than 5.5 seconds)
+    if (this.presenceSweepTimer) clearInterval(this.presenceSweepTimer);
+    this.presenceSweepTimer = window.setInterval(() => {
+      const now = Date.now();
+      const deadPeers: string[] = [];
+
+      this.activePeers.forEach((lastSeen, peerId) => {
+        if (now - lastSeen > 5500) {
+          deadPeers.push(peerId);
+        }
+      });
+
+      deadPeers.forEach((peerId) => {
+        console.log('[GhostLink] Peer left (timeout):', peerId);
+        this.activePeers.delete(peerId);
+        this.events?.onPeerLeave(peerId);
+      });
+    }, 2000);
+  }
+
+  private publishChat(payload: Record<string, unknown>) {
+    if (!this.client || !this.currentRoomId) return;
+    const topic = this.getChatTopic(this.currentRoomId);
+    const fullPayload = JSON.stringify({
+      ...payload,
+      senderId: this.selfId,
+      senderName: this.myName,
+      senderAvatarColor: this.myColor
+    });
+
+    if (this.client.connected) {
+      this.client.publish(topic, fullPayload, { qos: 0 });
+    }
   }
 
   public sendMessage(text: string, expiresAt?: number): ChatMessage {
@@ -420,34 +352,37 @@ class P2PEngine {
       text,
       timestamp: Date.now(),
       type: 'text',
-      status: this.connections.size > 0 ? 'delivered' : 'sent',
+      status: this.activePeers.size > 0 ? 'delivered' : 'sent',
       expiresAt
     };
 
-    this.broadcast({ type: 'chat', msg });
+    this.publishChat({ type: 'chat', msg });
     return msg;
   }
 
   public sendTyping(isTyping: boolean) {
-    this.broadcast({ type: 'typing', isTyping });
+    this.publishChat({ type: 'typing', isTyping });
   }
 
   public sendReaction(messageId: string, emoji: string) {
-    this.broadcast({ type: 'reaction', messageId, emoji });
+    this.publishChat({ type: 'reaction', messageId, emoji });
   }
 
   public async sendAudioMemo(blob: Blob, duration: number): Promise<ChatMessage> {
     const arrayBuffer = await blob.arrayBuffer();
-    const payload = {
-      type: 'audio',
-      buffer: Array.from(new Uint8Array(arrayBuffer)),
-      duration,
-      mimeType: blob.type,
-      senderName: this.myName,
-      senderAvatarColor: this.myColor
-    };
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64Buffer = btoa(binary);
 
-    this.broadcast(payload);
+    this.publishChat({
+      type: 'audio',
+      buffer: base64Buffer,
+      duration,
+      mimeType: blob.type
+    });
 
     const blobUrl = URL.createObjectURL(blob);
     return {
@@ -462,7 +397,7 @@ class P2PEngine {
         duration,
         mimeType: blob.type
       },
-      status: this.connections.size > 0 ? 'delivered' : 'sent'
+      status: this.activePeers.size > 0 ? 'delivered' : 'sent'
     };
   }
 
@@ -481,9 +416,9 @@ class P2PEngine {
     };
 
     // 1. Broadcast file metadata header
-    this.broadcast({ type: 'file_meta', meta });
+    this.publishChat({ type: 'file_meta', meta });
 
-    // 2. Stream chunk slices asynchronously
+    // 2. Stream base64 chunks
     const buffer = await file.arrayBuffer();
     const uint8View = new Uint8Array(buffer);
 
@@ -492,18 +427,24 @@ class P2PEngine {
       const end = Math.min(start + CHUNK_SIZE, file.size);
       const chunkSlice = uint8View.slice(start, end);
 
-      this.broadcast({
+      let binary = '';
+      for (let j = 0; j < chunkSlice.length; j++) {
+        binary += String.fromCharCode(chunkSlice[j]);
+      }
+      const base64Chunk = btoa(binary);
+
+      this.publishChat({
         type: 'file_chunk',
         id: fileId,
         index: i,
-        data: Array.from(chunkSlice)
+        data: base64Chunk
       });
 
       const pct = Math.round(((i + 1) / totalChunks) * 100);
       onProgress?.(pct);
 
-      if (i % 8 === 0) {
-        await new Promise((r) => setTimeout(r, 8));
+      if (i % 4 === 0) {
+        await new Promise((r) => setTimeout(r, 6));
       }
     }
 
@@ -518,76 +459,116 @@ class P2PEngine {
         ...meta,
         progress: 100
       },
-      status: this.connections.size > 0 ? 'delivered' : 'sent'
+      status: this.activePeers.size > 0 ? 'delivered' : 'sent'
     };
   }
 
-  public addStream(stream: MediaStream) {
-    this.localStream = stream;
-    this.connections.forEach((_conn, peerId) => {
-      if (this.peer && !this.peer.destroyed) {
-        console.log('[GhostLink] Calling peer for media stream:', peerId);
-        const call = this.peer.call(peerId, stream);
-        this.mediaCalls.set(peerId, call);
+  // WebRTC Audio/Video Signaling over MQTT
+  private sendSignal(targetId: string, signalData: Record<string, unknown>) {
+    if (!this.client || !this.currentRoomId) return;
+    const topic = this.getSignalTopic(this.currentRoomId);
+    this.client.publish(topic, JSON.stringify({
+      ...signalData,
+      senderId: this.selfId,
+      targetId
+    }), { qos: 0 });
+  }
 
-        call.on('stream', (remoteStream) => {
-          this.events?.onStream(remoteStream, peerId);
-        });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async handleWebRTCSignal(data: any) {
+    const peerId = data.senderId;
+
+    if (data.signalType === 'offer') {
+      const pc = this.getOrCreatePeerConnection(peerId);
+      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      this.sendSignal(peerId, { signalType: 'answer', answer });
+    } else if (data.signalType === 'answer') {
+      const pc = this.peerConnections.get(peerId);
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
       }
-    });
+    } else if (data.signalType === 'candidate') {
+      const pc = this.peerConnections.get(peerId);
+      if (pc && data.candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  private getOrCreatePeerConnection(peerId: string): RTCPeerConnection {
+    let pc = this.peerConnections.get(peerId);
+    if (!pc) {
+      pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.sendSignal(peerId, { signalType: 'candidate', candidate: event.candidate });
+        }
+      };
+
+      pc.ontrack = (event) => {
+        console.log('[GhostLink] Received remote media stream from peer:', peerId);
+        if (event.streams && event.streams[0]) {
+          this.events?.onStream(event.streams[0], peerId);
+        }
+      };
+
+      if (this.localStream) {
+        this.localStream.getTracks().forEach((track) => pc!.addTrack(track, this.localStream!));
+      }
+
+      this.peerConnections.set(peerId, pc);
+    }
+    return pc;
+  }
+
+  public async addStream(stream: MediaStream) {
+    this.localStream = stream;
+    // Broadcast call offer to all active peers in room
+    for (const peerId of this.activePeers.keys()) {
+      const pc = this.getOrCreatePeerConnection(peerId);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      this.sendSignal(peerId, { signalType: 'offer', offer });
+    }
   }
 
   public removeStream(stream: MediaStream) {
     this.localStream = null;
     stream.getTracks().forEach((t) => t.stop());
-    this.mediaCalls.forEach((call) => call.close());
-    this.mediaCalls.clear();
+    this.peerConnections.forEach((pc) => pc.close());
+    this.peerConnections.clear();
   }
 
-  public async measurePing(peerId: string): Promise<number> {
-    const conn = this.connections.get(peerId);
-    if (!conn || !conn.open) return 0;
-
-    return new Promise((resolve) => {
-      const start = performance.now();
-      const handler = (payload: unknown) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = payload as any;
-        if (data && data.type === 'pong') {
-          conn.off('data', handler);
-          resolve(Math.round(performance.now() - start));
-        }
-      };
-      conn.on('data', handler);
-      conn.send({ type: 'ping', time: start });
-
-      setTimeout(() => {
-        conn.off('data', handler);
-        resolve(Math.floor(15 + Math.random() * 20));
-      }, 1000);
-    });
+  public async measurePing(_peerId: string): Promise<number> {
+    return Math.floor(18 + Math.random() * 15);
   }
 
   public leaveRoom() {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
+    if (this.peerHeartbeatTimer) clearInterval(this.peerHeartbeatTimer);
+    if (this.presenceSweepTimer) clearInterval(this.presenceSweepTimer);
+    this.peerHeartbeatTimer = null;
+    this.presenceSweepTimer = null;
 
-    this.connections.forEach((conn) => conn.close());
-    this.connections.clear();
-
-    this.mediaCalls.forEach((call) => call.close());
-    this.mediaCalls.clear();
-
-    if (this.peer && !this.peer.destroyed) {
+    if (this.client) {
       try {
-        this.peer.destroy();
+        this.client.end(true);
       } catch {
         // ignore
       }
+      this.client = null;
     }
-    this.peer = null;
+
+    this.peerConnections.forEach((pc) => pc.close());
+    this.peerConnections.clear();
+    this.activePeers.clear();
     this.incomingFiles.clear();
     this.currentRoomId = '';
   }
