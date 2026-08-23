@@ -14,7 +14,10 @@ import {
   ArrowRight,
   ShieldCheck,
   RefreshCw,
-  Zap
+  Zap,
+  Eye,
+  EyeOff,
+  Lock
 } from 'lucide-react';
 import type { ConnectionTab } from '../types';
 
@@ -22,26 +25,36 @@ interface ConnectionModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentRoomId: string;
-  onJoinRoom: (newRoomId: string) => void;
+  currentSecretKey: string;
+  onJoinRoom: (newRoomId: string, newSecretKey: string) => void;
+  onGenerateNewRoom: () => void;
 }
 
 export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   isOpen,
   onClose,
   currentRoomId,
+  currentSecretKey,
   onJoinRoom,
+  onGenerateNewRoom,
 }) => {
   const [activeTab, setActiveTab] = useState<ConnectionTab>('code');
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [joinInput, setJoinInput] = useState('');
+  const [showKey, setShowKey] = useState(false);
+
+  // Manual Join Fields
+  const [inputRoom, setInputRoom] = useState('');
+  const [inputKey, setInputKey] = useState('');
+
   const [scanError, setScanError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const qrContainerId = 'qr-camera-reader-viewport';
 
-  // Construct invite link
-  const inviteUrl = `${window.location.origin}${window.location.pathname}#room=${encodeURIComponent(currentRoomId)}`;
+  // Construct full Zero-Knowledge Invite URL with both Room & Secret Key in URL fragment
+  const inviteUrl = `${window.location.origin}${window.location.pathname}#room=${encodeURIComponent(currentRoomId)}&key=${encodeURIComponent(currentSecretKey)}`;
 
   // Handle camera scanner lifecycle
   useEffect(() => {
@@ -96,28 +109,43 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     }
   };
 
-  const handleScannedData = (data: string) => {
-    // Extract room from full URL or standalone code
-    let extracted = data.trim();
-    if (extracted.includes('#room=')) {
-      const match = extracted.match(/#room=([^&]+)/);
-      if (match && match[1]) {
-        extracted = decodeURIComponent(match[1]);
-      }
-    } else if (extracted.startsWith('http')) {
-      try {
-        const url = new URL(extracted);
-        if (url.hash.includes('room=')) {
-          extracted = decodeURIComponent(url.hash.split('room=')[1]);
-        }
-      } catch {
-        // ignore
+  const parseRoomAndKey = (text: string): { roomId: string; secretKey: string } | null => {
+    const trimmed = text.trim();
+
+    // Check if URL with #room=...&key=...
+    if (trimmed.includes('#room=')) {
+      const roomMatch = trimmed.match(/#room=([^&]+)/);
+      const keyMatch = trimmed.match(/&key=([^&]+)/);
+      if (roomMatch && roomMatch[1]) {
+        const rId = decodeURIComponent(roomMatch[1]);
+        const sKey = keyMatch && keyMatch[1] ? decodeURIComponent(keyMatch[1]) : '';
+        return { roomId: rId, secretKey: sKey };
       }
     }
 
-    if (extracted) {
+    // Check if plain query string format
+    if (trimmed.includes('room=') && trimmed.includes('key=')) {
+      const parts = new URLSearchParams(trimmed.replace(/^#/, ''));
+      const rId = parts.get('room');
+      const sKey = parts.get('key');
+      if (rId) {
+        return { roomId: rId, secretKey: sKey || '' };
+      }
+    }
+
+    // If just a room code string without URL
+    if (trimmed) {
+      return { roomId: trimmed, secretKey: '' };
+    }
+
+    return null;
+  };
+
+  const handleScannedData = (data: string) => {
+    const parsed = parseRoomAndKey(data);
+    if (parsed && parsed.roomId) {
       stopCameraScanner();
-      onJoinRoom(extracted);
+      onJoinRoom(parsed.roomId, parsed.secretKey || currentSecretKey);
       onClose();
     }
   };
@@ -137,11 +165,14 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     }
   };
 
-  const copyToClipboard = (text: string, isLink: boolean) => {
+  const copyToClipboard = (text: string, type: 'code' | 'key' | 'link') => {
     navigator.clipboard.writeText(text);
-    if (isLink) {
+    if (type === 'link') {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
+    } else if (type === 'key') {
+      setCopiedKey(true);
+      setTimeout(() => setCopiedKey(false), 2000);
     } else {
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 2000);
@@ -150,23 +181,21 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
 
   const handleManualJoin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!joinInput.trim()) return;
-    let target = joinInput.trim();
-    if (target.startsWith('#')) target = target.substring(1);
-    if (target.includes('#room=')) {
-      const match = target.match(/#room=([^&]+)/);
-      if (match) target = decodeURIComponent(match[1]);
-    }
-    onJoinRoom(target);
-    onClose();
-  };
+    if (!inputRoom.trim()) return;
 
-  const generateRandomCode = () => {
-    const prefixes = ['NEXUS', 'CYBER', 'SOLAR', 'GHOST', 'SHADOW', 'QUANTUM', 'HYPER', 'PULSE'];
-    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const num = Math.floor(1000 + Math.random() * 9000);
-    const newId = `${prefix}-${num}`;
-    onJoinRoom(newId);
+    // Check if input is full invite URL
+    const parsed = parseRoomAndKey(inputRoom);
+    if (parsed && parsed.secretKey) {
+      onJoinRoom(parsed.roomId, parsed.secretKey);
+      onClose();
+      return;
+    }
+
+    const targetRoom = parsed ? parsed.roomId : inputRoom.trim();
+    const targetKey = inputKey.trim() || currentSecretKey;
+
+    onJoinRoom(targetRoom, targetKey);
+    onClose();
   };
 
   const downloadQrCode = () => {
@@ -187,7 +216,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
         ctx.drawImage(img, 20, 20, 360, 360);
         const pngFile = canvas.toDataURL('image/png');
         const downloadLink = document.createElement('a');
-        downloadLink.download = `ghostlink-${currentRoomId}-qr.png`;
+        downloadLink.download = `ghostlink-${currentRoomId}-vault-qr.png`;
         downloadLink.href = pngFile;
         downloadLink.click();
       }
@@ -204,12 +233,12 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
         className="glass-panel" 
         style={{
           width: '100%',
-          maxWidth: '520px',
+          maxWidth: '540px',
           padding: '24px',
           position: 'relative',
-          background: 'rgba(12, 17, 28, 0.92)',
-          border: '1px solid rgba(0, 242, 254, 0.3)',
-          boxShadow: '0 0 40px rgba(0, 242, 254, 0.2)'
+          background: 'rgba(10, 14, 24, 0.96)',
+          border: '1px solid rgba(0, 242, 254, 0.35)',
+          boxShadow: 'var(--shadow-lg)'
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -219,11 +248,11 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Zap size={20} color="var(--cyan-primary)" />
               <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>
-                P2P Connection Hub
+                Encrypted Vault Pairing
               </h2>
             </div>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-              Connect directly via Room Code, QR Code, or Camera Scanner
+              Separate Room Handle + 256-bit Secret Key (Zero-Knowledge Exchange)
             </p>
           </div>
 
@@ -267,7 +296,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             }}
           >
             <KeyRound size={15} />
-            Room Code
+            Room & Key
           </button>
 
           <button
@@ -317,67 +346,117 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </button>
         </div>
 
-        {/* Tab 1: Code-based Connection */}
+        {/* Tab 1: Room Code + Secret Encryption Key */}
         {activeTab === 'code' && (
           <div>
-            {/* Current Room Code Display Box */}
+            {/* Active Room Code & Secret Key Box */}
             <div style={{
               background: 'linear-gradient(180deg, rgba(0, 242, 254, 0.08) 0%, rgba(0, 0, 0, 0.5) 100%)',
               border: '1px solid rgba(0, 242, 254, 0.3)',
               borderRadius: '16px',
               padding: '18px',
-              textAlign: 'center',
               marginBottom: '16px'
             }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>
-                Your Active Room Code
+              {/* Room Identifier */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Public Room Handle
+                  </div>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '1.4rem',
+                    fontWeight: 800,
+                    color: '#ffffff',
+                    letterSpacing: '0.05em'
+                  }}>
+                    #{currentRoomId.toUpperCase()}
+                  </div>
+                </div>
+
+                <button
+                  className="btn-cyber-icon"
+                  onClick={() => copyToClipboard(currentRoomId, 'code')}
+                  title="Copy Room Handle"
+                >
+                  {copiedCode ? <Check size={16} color="var(--emerald-primary)" /> : <Copy size={16} />}
+                </button>
               </div>
+
+              {/* Secret Key Token */}
               <div style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '1.75rem',
-                fontWeight: 800,
-                color: 'var(--cyan-primary)',
-                letterSpacing: '0.1em',
-                marginBottom: '14px',
-                textShadow: '0 0 15px rgba(0,242,254,0.5)'
+                background: 'rgba(0, 0, 0, 0.6)',
+                borderRadius: '12px',
+                padding: '10px 14px',
+                border: '1px solid rgba(168, 85, 247, 0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                marginBottom: '14px'
               }}>
-                {currentRoomId.toUpperCase()}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--violet-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Lock size={11} /> 256-bit Secret Key Token
+                  </div>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.82rem',
+                    color: 'var(--cyan-primary)',
+                    letterSpacing: '0.05em',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {showKey ? currentSecretKey : '••••••••••••••••••••••••••••••••'}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    className="btn-cyber-icon"
+                    onClick={() => setShowKey(!showKey)}
+                    style={{ width: '32px', height: '32px' }}
+                    title={showKey ? "Hide Key" : "Reveal Key"}
+                  >
+                    {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+
+                  <button
+                    className="btn-cyber-icon"
+                    onClick={() => copyToClipboard(currentSecretKey, 'key')}
+                    style={{ width: '32px', height: '32px' }}
+                    title="Copy 256-bit Secret Key"
+                  >
+                    {copiedKey ? <Check size={14} color="var(--emerald-primary)" /> : <Copy size={14} />}
+                  </button>
+                </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                <button
-                  className="btn-cyber-primary"
-                  onClick={() => copyToClipboard(currentRoomId, false)}
-                  style={{ padding: '8px 16px', fontSize: '0.8rem' }}
-                >
-                  {copiedCode ? <Check size={15} /> : <Copy size={15} />}
-                  <span>{copiedCode ? 'Code Copied!' : 'Copy Code'}</span>
-                </button>
-
-                <button
-                  className="btn-cyber-secondary"
-                  onClick={() => copyToClipboard(inviteUrl, true)}
-                  style={{ padding: '8px 16px', fontSize: '0.8rem' }}
-                >
-                  {copiedLink ? <Check size={15} /> : <Sparkles size={15} />}
-                  <span>{copiedLink ? 'Link Copied!' : 'Copy Direct Link'}</span>
-                </button>
-              </div>
+              {/* Copy Full E2EE Invite Link */}
+              <button
+                className="btn-cyber-primary"
+                onClick={() => copyToClipboard(inviteUrl, 'link')}
+                style={{ width: '100%', padding: '10px 16px', fontSize: '0.85rem' }}
+              >
+                {copiedLink ? <Check size={16} /> : <Sparkles size={16} />}
+                <span>{copiedLink ? 'Full Encrypted Invite Link Copied!' : 'Copy Full E2EE Invite Link'}</span>
+              </button>
             </div>
 
-            {/* Quick Join another Room Code */}
+            {/* Quick Join another Room Code + Secret Key */}
             <form onSubmit={handleManualJoin} style={{ marginTop: '16px' }}>
               <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
-                Join Another Room / Enter Friend's Code:
+                Join another 2-Person Vault (Paste Full Link or Enter Code + Key):
               </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <input
                   type="text"
-                  value={joinInput}
-                  onChange={(e) => setJoinInput(e.target.value)}
-                  placeholder="e.g. CYBER-4819 or paste invite link..."
+                  value={inputRoom}
+                  onChange={(e) => setInputRoom(e.target.value)}
+                  placeholder="Paste full invite link (or enter Room Code e.g. VAULT-4819)..."
                   style={{
-                    flex: 1,
+                    width: '100%',
                     background: 'rgba(0, 0, 0, 0.4)',
                     border: '1px solid var(--border-subtle)',
                     borderRadius: '10px',
@@ -385,19 +464,37 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                     color: '#ffffff',
                     fontFamily: 'var(--font-mono)',
                     fontSize: '0.85rem',
-                    outline: 'none',
-                    transition: 'border-color 0.2s'
+                    outline: 'none'
                   }}
-                  onFocus={(e) => e.target.style.borderColor = 'var(--cyan-primary)'}
-                  onBlur={(e) => e.target.style.borderColor = 'var(--border-subtle)'}
                 />
+
+                {!inputRoom.includes('&key=') && inputRoom.trim().length > 0 && (
+                  <input
+                    type="password"
+                    value={inputKey}
+                    onChange={(e) => setInputKey(e.target.value)}
+                    placeholder="Secret Key Token (if provided separately)..."
+                    style={{
+                      width: '100%',
+                      background: 'rgba(0, 0, 0, 0.4)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '10px',
+                      padding: '10px 14px',
+                      color: '#ffffff',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.85rem',
+                      outline: 'none'
+                    }}
+                  />
+                )}
+
                 <button
                   type="submit"
                   className="btn-cyber-primary"
-                  disabled={!joinInput.trim()}
-                  style={{ padding: '10px 16px', opacity: joinInput.trim() ? 1 : 0.5 }}
+                  disabled={!inputRoom.trim()}
+                  style={{ padding: '10px 16px', opacity: inputRoom.trim() ? 1 : 0.5, marginTop: '4px' }}
                 >
-                  <span>Join</span>
+                  <span>Connect & Decrypt Vault</span>
                   <ArrowRight size={16} />
                 </button>
               </div>
@@ -406,22 +503,22 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             {/* Random New Room */}
             <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-                Want a fresh private room?
+                Want a fresh 2-person vault?
               </span>
               <button
                 type="button"
                 className="btn-cyber-secondary"
-                onClick={generateRandomCode}
+                onClick={onGenerateNewRoom}
                 style={{ padding: '6px 12px', fontSize: '0.75rem' }}
               >
                 <RefreshCw size={13} />
-                <span>Create New Room</span>
+                <span>Generate New Room & Key</span>
               </button>
             </div>
           </div>
         )}
 
-        {/* Tab 2: QR Code Generation */}
+        {/* Tab 2: QR Code Generation (Includes both Room and Key) */}
         {activeTab === 'qr' && (
           <div style={{ textAlign: 'center' }}>
             <div style={{
@@ -441,8 +538,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               />
             </div>
 
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '14px', maxWidth: '360px', margin: '0 auto 14px' }}>
-              Scan this QR code with any mobile phone camera or companion browser to instantly join this encrypted P2P room.
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '14px', maxWidth: '380px', margin: '0 auto 14px' }}>
+              Scanning this QR automatically exchanges the <strong>Room Handle + 256-bit AES Encryption Key</strong> via URL fragment with zero server contact.
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
@@ -456,11 +553,11 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               </button>
               <button
                 className="btn-cyber-secondary"
-                onClick={() => copyToClipboard(inviteUrl, true)}
+                onClick={() => copyToClipboard(inviteUrl, 'link')}
                 style={{ padding: '8px 16px', fontSize: '0.8rem' }}
               >
                 {copiedLink ? <Check size={15} /> : <Copy size={15} />}
-                <span>{copiedLink ? 'Link Copied!' : 'Copy Link'}</span>
+                <span>{copiedLink ? 'Link Copied!' : 'Copy Full Invite'}</span>
               </button>
             </div>
           </div>
@@ -483,7 +580,6 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               justifyContent: 'center',
               marginBottom: '16px'
             }}>
-              {/* Target Container for html5-qrcode */}
               <div 
                 id={qrContainerId} 
                 style={{ width: '100%', minHeight: '260px' }}
@@ -514,7 +610,6 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               )}
             </div>
 
-            {/* File Drop / Upload Alternative */}
             <div style={{ textAlign: 'center' }}>
               <label 
                 className="btn-cyber-secondary" 
@@ -546,7 +641,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           color: 'var(--text-dim)'
         }}>
           <ShieldCheck size={14} color="var(--emerald-primary)" />
-          <span>Zero logs saved • Direct peer-to-peer data channels</span>
+          <span>Keys never touch the server • RFC 3986 URL Fragment Encryption</span>
         </div>
       </div>
     </div>

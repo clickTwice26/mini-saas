@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import type { ChatMessage, PeerInfo, CallState, FileMetadata, AudioMemoData } from './types';
 import { p2pEngine, getDeterministicName, getPeerColor } from './services/p2pEngine';
+import { cryptoService } from './services/cryptoService';
 import { soundService } from './services/soundService';
 import { Header } from './components/Header';
 import { ChatArea } from './components/ChatArea';
@@ -10,35 +11,56 @@ import { ConnectionModal } from './components/ConnectionModal';
 import { PeerMeshVisualizer } from './components/PeerMeshVisualizer';
 import { VideoCallModal } from './components/VideoCallModal';
 import { IncomingCallModal } from './components/IncomingCallModal';
+import { RoomLockedModal } from './components/RoomLockedModal';
 import { FileProgressWidget } from './components/FileProgressWidget';
 
 export const App: React.FC = () => {
-  // Extract initial room from URL hash or generate fresh code
-  const getRoomFromHash = () => {
+  // Extract initial room and secret key from URL fragment (#room=...&key=...)
+  const getParamsFromHash = () => {
     const hash = window.location.hash;
+    let room = '';
+    let key = '';
+
     if (hash.includes('room=')) {
-      const match = hash.match(/room=([^&]+)/);
-      if (match && match[1]) {
-        return decodeURIComponent(match[1]).trim().toUpperCase();
+      const roomMatch = hash.match(/room=([^&]+)/);
+      if (roomMatch && roomMatch[1]) {
+        room = decodeURIComponent(roomMatch[1]).trim().toUpperCase();
       }
     }
-    return null;
+
+    if (hash.includes('key=')) {
+      const keyMatch = hash.match(/key=([^&]+)/);
+      if (keyMatch && keyMatch[1]) {
+        key = decodeURIComponent(keyMatch[1]).trim();
+      }
+    }
+
+    return { room, key };
   };
 
-  const [roomId, setRoomId] = useState<string>(() => {
-    const fromHash = getRoomFromHash();
-    if (fromHash) return fromHash;
-
-    const prefixes = ['NEXUS', 'CYBER', 'SOLAR', 'GHOST', 'SHADOW', 'QUANTUM', 'HYPER', 'PULSE'];
+  const generateFreshRoomId = () => {
+    const prefixes = ['VAULT', 'NEXUS', 'CYBER', 'SOLAR', 'GHOST', 'SHADOW', 'QUANTUM', 'PULSE'];
     const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
     const num = Math.floor(1000 + Math.random() * 9000);
     return `${prefix}-${num}`;
+  };
+
+  // State: Room ID & 256-bit Secret Key Token
+  const [roomId, setRoomId] = useState<string>(() => {
+    const { room } = getParamsFromHash();
+    return room || generateFreshRoomId();
+  });
+
+  const [secretKey, setSecretKey] = useState<string>(() => {
+    const { key } = getParamsFromHash();
+    return key || cryptoService.generateSecureKey();
   });
 
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [isMeshVisualizerOpen, setIsMeshVisualizerOpen] = useState(false);
+  const [isRoomLockedOpen, setIsRoomLockedOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => soundService.getIsMuted());
 
   // Incoming Call State
@@ -66,26 +88,29 @@ export const App: React.FC = () => {
     remoteStreams: {}
   });
 
-  // Self information
   const selfName = p2pEngine.myName;
   const selfColor = p2pEngine.myColor;
   const selfId = p2pEngine.selfId;
-  const currentActiveRoomRef = useRef<string>('');
+  const currentActiveSessionRef = useRef<string>('');
 
-  // Connect to P2P Room
-  const initP2P = useCallback((targetRoomId: string) => {
-    const cleanId = targetRoomId.trim().toUpperCase();
-    if (!cleanId) return;
+  // Connect to 1-on-1 Encrypted P2P Vault
+  const initP2P = useCallback((targetRoomId: string, targetKey: string) => {
+    const cleanRoom = targetRoomId.trim().toUpperCase();
+    const cleanKey = targetKey.trim();
+    if (!cleanRoom || !cleanKey) return;
 
-    if (currentActiveRoomRef.current === cleanId && p2pEngine.isConnected()) {
+    const sessionFingerprint = `${cleanRoom}:${cleanKey}`;
+    if (currentActiveSessionRef.current === sessionFingerprint && p2pEngine.isConnected()) {
       return;
     }
 
-    currentActiveRoomRef.current = cleanId;
-    window.history.replaceState(null, '', `#room=${encodeURIComponent(cleanId)}`);
+    currentActiveSessionRef.current = sessionFingerprint;
+    // Update URL fragment without reloading
+    window.history.replaceState(null, '', `#room=${encodeURIComponent(cleanRoom)}&key=${encodeURIComponent(cleanKey)}`);
     setPeers([]);
+    setIsRoomLockedOpen(false);
 
-    p2pEngine.connectToRoom(cleanId, {
+    p2pEngine.connectToRoom(cleanRoom, cleanKey, {
       onPeerJoin: (peerId) => {
         const newPeer: PeerInfo = {
           id: peerId,
@@ -99,7 +124,6 @@ export const App: React.FC = () => {
         });
         soundService.playPeerJoined();
 
-        // Celebration Confetti!
         confetti({
           particleCount: 50,
           spread: 60,
@@ -116,6 +140,11 @@ export const App: React.FC = () => {
           return { ...prev, remoteStreams: nextRemotes };
         });
         soundService.playPeerLeft();
+      },
+
+      onRoomLocked: () => {
+        setIsRoomLockedOpen(true);
+        soundService.playNuke();
       },
 
       onMessage: (msg: ChatMessage) => {
@@ -201,7 +230,6 @@ export const App: React.FC = () => {
       },
 
       onStream: (stream, peerId) => {
-        console.log('[GhostLink] Remote stream attached in UI from:', peerId);
         setCallState((prev) => ({
           ...prev,
           active: true,
@@ -214,27 +242,28 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  // Connect on room change
+  // Connect on room or key change
   useEffect(() => {
-    initP2P(roomId);
+    initP2P(roomId, secretKey);
     return () => {
       p2pEngine.leaveRoom();
     };
-  }, [roomId, initP2P]);
+  }, [roomId, secretKey, initP2P]);
 
   // Listen to hash change from external sources
   useEffect(() => {
     const handleHashChange = () => {
-      const fromHash = getRoomFromHash();
-      if (fromHash && fromHash !== currentActiveRoomRef.current) {
+      const { room, key } = getParamsFromHash();
+      if (room && (room !== roomId || (key && key !== secretKey))) {
         setMessages([]);
         setPeers([]);
-        setRoomId(fromHash);
+        setRoomId(room);
+        if (key) setSecretKey(key);
       }
     };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  }, [roomId, secretKey]);
 
   // Ephemeral Messages self-destruct cleaner
   useEffect(() => {
@@ -248,16 +277,32 @@ export const App: React.FC = () => {
   }, []);
 
   // Switch Room handler
-  const handleJoinRoom = (newRoomId: string) => {
-    const cleanId = newRoomId.trim().toUpperCase();
-    if (cleanId && cleanId !== roomId) {
+  const handleJoinRoom = (newRoomId: string, newSecretKey: string) => {
+    const cleanRoom = newRoomId.trim().toUpperCase();
+    const cleanKey = newSecretKey.trim() || secretKey;
+    if (cleanRoom) {
       setMessages([]);
       setPeers([]);
-      setRoomId(cleanId);
+      setRoomId(cleanRoom);
+      setSecretKey(cleanKey);
     }
   };
 
-  // Chat message sending
+  // Generate completely fresh Room & Key
+  const handleGenerateNewRoomAndKey = () => {
+    soundService.playNuke();
+    p2pEngine.leaveRoom();
+    setMessages([]);
+    setPeers([]);
+    if (callState.active) handleEndCall();
+
+    const newRoom = generateFreshRoomId();
+    const newKey = cryptoService.generateSecureKey();
+    setRoomId(newRoom);
+    setSecretKey(newKey);
+  };
+
+  // Chat message sending (Encrypted with AES-GCM-256)
   const handleSendMessage = (text: string, expiresAt?: number) => {
     const msg = p2pEngine.sendMessage(text, expiresAt);
     setMessages((prev) => [...prev, msg]);
@@ -448,33 +493,17 @@ export const App: React.FC = () => {
     });
   };
 
-  // Sound mute toggle
   const handleToggleMute = () => {
     const muted = soundService.toggleMute();
     setIsMuted(muted);
   };
 
-  // Panic Button: Wipes session memory & generates brand new room
-  const handlePanicNuke = () => {
-    soundService.playNuke();
-    p2pEngine.leaveRoom();
-    setMessages([]);
-    setPeers([]);
-    if (callState.active) handleEndCall();
-
-    const prefixes = ['NEXUS', 'CYBER', 'SOLAR', 'GHOST', 'SHADOW', 'QUANTUM', 'HYPER', 'PULSE'];
-    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const num = Math.floor(1000 + Math.random() * 9000);
-    const newId = `${prefix}-${num}`;
-    setRoomId(newId);
-  };
-
   const handleCopyRoomLink = () => {
-    const inviteUrl = `${window.location.origin}${window.location.pathname}#room=${encodeURIComponent(roomId)}`;
+    const inviteUrl = `${window.location.origin}${window.location.pathname}#room=${encodeURIComponent(roomId)}&key=${encodeURIComponent(secretKey)}`;
     if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
       navigator.share({
-        title: 'Join my GhostLink P2P Room',
-        text: `Connect to my encrypted P2P room #${roomId}`,
+        title: 'Join my GhostLink 2-Person Encrypted Vault',
+        text: `Connect to my 1-on-1 AES-GCM-256 encrypted room #${roomId}`,
         url: inviteUrl
       }).catch(() => {
         navigator.clipboard.writeText(inviteUrl);
@@ -498,6 +527,7 @@ export const App: React.FC = () => {
       {/* Header */}
       <Header
         roomId={roomId}
+        secretKey={secretKey}
         peers={peers}
         isMuted={isMuted}
         onToggleMute={handleToggleMute}
@@ -505,7 +535,7 @@ export const App: React.FC = () => {
         onToggleMeshVisualizer={() => setIsMeshVisualizerOpen(!isMeshVisualizerOpen)}
         isMeshVisualizerOpen={isMeshVisualizerOpen}
         onStartCall={handleStartCall}
-        onPanicNuke={handlePanicNuke}
+        onPanicNuke={handleGenerateNewRoomAndKey}
         onCopyRoomLink={handleCopyRoomLink}
       />
 
@@ -545,7 +575,9 @@ export const App: React.FC = () => {
         isOpen={isConnectModalOpen}
         onClose={() => setIsConnectModalOpen(false)}
         currentRoomId={roomId}
+        currentSecretKey={secretKey}
         onJoinRoom={handleJoinRoom}
+        onGenerateNewRoom={handleGenerateNewRoomAndKey}
       />
 
       {/* Mesh Topology Visualizer Modal */}
@@ -562,6 +594,12 @@ export const App: React.FC = () => {
         incomingCall={incomingCall}
         onAccept={handleAcceptIncomingCall}
         onDecline={handleDeclineIncomingCall}
+      />
+
+      {/* Room Locked Security Lockdown Modal */}
+      <RoomLockedModal
+        isOpen={isRoomLockedOpen}
+        onGenerateNewRoom={handleGenerateNewRoomAndKey}
       />
 
       {/* Active Video / Audio Call Modal */}

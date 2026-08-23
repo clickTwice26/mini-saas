@@ -4,11 +4,11 @@ import {
   Download, 
   Clock, 
   Check, 
-  ShieldAlert, 
+  ShieldCheck, 
   Lock, 
   Zap, 
   Copy, 
-  Sparkles,
+  KeyRound,
   Image as ImageIcon,
   Smile
 } from 'lucide-react';
@@ -106,7 +106,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       );
     }
 
-    // Process inline code and formatting
+    // Process inline text and line breaks
     return (
       <span style={{ lineHeight: '1.5', wordBreak: 'break-word' }}>
         {text.split('\n').map((line, lineIdx) => (
@@ -120,6 +120,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const typingPeers = peers.filter((p) => p.isTyping);
+  const isRoomFull = peers.length >= 1;
 
   return (
     <div style={{
@@ -138,26 +139,26 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         justifyContent: 'space-between',
         padding: '8px 16px',
         borderRadius: '12px',
-        background: peers.length > 0 ? 'rgba(16, 185, 129, 0.12)' : 'rgba(0, 242, 254, 0.08)',
-        border: peers.length > 0 ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(0, 242, 254, 0.25)',
+        background: isRoomFull ? 'rgba(16, 185, 129, 0.12)' : 'rgba(0, 242, 254, 0.08)',
+        border: isRoomFull ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(0, 242, 254, 0.25)',
         fontSize: '0.78rem',
         animation: 'fadeIn 0.2s ease-out'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className={peers.length > 0 ? "status-pulse" : "status-pulse-cyan"} />
-          <span style={{ fontWeight: 700, color: peers.length > 0 ? 'var(--emerald-primary)' : 'var(--cyan-primary)' }}>
-            {peers.length > 0 
-              ? `⚡ ${peers.length} ${peers.length === 1 ? 'Peer' : 'Peers'} Connected via WebRTC P2P` 
-              : `📡 Awaiting peer in Room #${currentRoomId.toUpperCase()}...`}
+          <span className={isRoomFull ? "status-pulse" : "status-pulse-cyan"} />
+          <span style={{ fontWeight: 700, color: isRoomFull ? 'var(--emerald-primary)' : 'var(--cyan-primary)' }}>
+            {isRoomFull 
+              ? `🔒 1-on-1 Encrypted Session Active (2/2 Peers) • AES-GCM-256` 
+              : `📡 Awaiting 2nd Peer in Room #${currentRoomId.toUpperCase()}...`}
           </span>
-          {peers.length === 0 && (
+          {!isRoomFull && (
             <span style={{ color: 'var(--text-dim)', fontSize: '0.72rem' }}>
-              (Scan QR code on your mobile or companion browser to pair)
+              (Strict 2-Person Vault • Scan QR code to pair)
             </span>
           )}
         </div>
 
-        {peers.length === 0 && (
+        {!isRoomFull && (
           <button
             onClick={onOpenConnectModal}
             className="btn-cyber-primary"
@@ -196,12 +197,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
 
           <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#ffffff', marginBottom: '8px' }}>
-            Zero-Knowledge P2P Room Active
+            Strict 1-on-1 Encrypted Vault
           </h3>
 
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '20px' }}>
-            You are connected to room <strong style={{ color: 'var(--cyan-primary)' }}>#{currentRoomId.toUpperCase()}</strong>. 
-            All chats, files, and voice notes travel directly peer-to-peer with zero central database logs.
+            Connected to room <strong style={{ color: 'var(--cyan-primary)' }}>#{currentRoomId.toUpperCase()}</strong>. 
+            Protected by <strong>Hardware-Grade AES-GCM-256</strong> End-to-End Encryption with strict <strong>2-person capacity locking</strong>.
           </p>
 
           <div style={{
@@ -211,26 +212,27 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             marginBottom: '22px'
           }}>
             <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
-              <Zap size={16} color="var(--cyan-primary)" style={{ marginBottom: '4px' }} />
+              <ShieldCheck size={16} color="var(--emerald-primary)" style={{ marginBottom: '4px' }} />
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>AES-GCM-256</div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>Zero-Knowledge E2EE</div>
+            </div>
+
+            <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
+              <Lock size={16} color="var(--cyan-primary)" style={{ marginBottom: '4px' }} />
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>2-Person Lock</div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>1-on-1 Vault only</div>
+            </div>
+
+            <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
+              <Zap size={16} color="var(--violet-primary)" style={{ marginBottom: '4px' }} />
               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>Zero Database</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>RAM-only session</div>
-            </div>
-
-            <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
-              <ShieldAlert size={16} color="var(--emerald-primary)" style={{ marginBottom: '4px' }} />
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>DTLS Encrypted</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>End-to-End P2P</div>
-            </div>
-
-            <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
-              <Sparkles size={16} color="var(--violet-primary)" style={{ marginBottom: '4px' }} />
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ffffff' }}>Unlimited Files</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>Direct channel stream</div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>RAM-only transit</div>
             </div>
           </div>
 
           <button className="btn-cyber-primary" onClick={onOpenConnectModal} style={{ margin: '0 auto' }}>
-            <span>Invite Peers via QR or Code</span>
+            <KeyRound size={16} />
+            <span>Invite 2nd Peer via QR or Code</span>
           </button>
         </div>
       )}
@@ -354,7 +356,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           {msg.fileData.name}
                         </div>
                         <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                          {formatFileSize(msg.fileData.size)} • P2P Direct
+                          {formatFileSize(msg.fileData.size)} • AES-256 E2EE
                         </div>
                       </div>
 
@@ -379,7 +381,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
               </div>
 
-              {/* Reaction Trigger Button (Hover) */}
+              {/* Reaction Trigger Button */}
               <button
                 onClick={() => setActiveReactionPicker(activeReactionPicker === msg.id ? null : msg.id)}
                 style={{
@@ -487,7 +489,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             <span className="status-pulse-cyan" style={{ width: '5px', height: '5px', animationDelay: '0.4s' }} />
           </div>
           <span>
-            {typingPeers.map((p) => p.name).join(', ')} {typingPeers.length === 1 ? 'is' : 'are'} typing...
+            {typingPeers.map((p) => p.name).join(', ')} is typing...
           </span>
         </div>
       )}
