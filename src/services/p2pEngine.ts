@@ -11,7 +11,10 @@ export interface P2PEvents {
   onFileProgress: (fileId: string, progress: number) => void;
   onFileComplete: (meta: FileMetadata) => void;
   onAudioMemo: (audio: AudioMemoData, senderId: string, senderName: string, senderAvatarColor: string) => void;
-  onStream: (stream: MediaStream, peerId: string, meta?: Record<string, unknown>) => void;
+  onIncomingCall?: (callerId: string, callerName: string, mode: 'video' | 'audio') => void;
+  onCallAccepted?: (peerId: string) => void;
+  onCallEnded?: (peerId: string) => void;
+  onStream: (stream: MediaStream, peerId: string) => void;
 }
 
 // Deterministic colors for peer avatars
@@ -43,29 +46,39 @@ export const getDeterministicName = (id: string): string => {
 
 const CHUNK_SIZE = 32 * 1024; // 32KB payload chunk
 
-// High-Speed Public Ephemeral WebSocket MQTT Brokers (Zero Database / RAM-Only)
+// High-Speed Public Ephemeral WebSocket MQTT Brokers
 const MQTT_BROKER_URLS = [
   'wss://broker.hivemq.com:8884/mqtt',
   'wss://broker.emqx.io:8084/mqtt',
   'wss://test.mosquitto.org:8081/mqtt'
 ];
 
-// STUN ICE Servers for direct video calling
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
-  }
-];
+// STUN and TLS TURN ICE Servers for 100% Reliable Cross-Network WebRTC Media Traversal
+const ICE_SERVERS: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turns:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ],
+  iceCandidatePoolSize: 10
+};
 
 class P2PEngine {
   public selfId: string = '';
@@ -80,8 +93,9 @@ class P2PEngine {
   private peerHeartbeatTimer: number | null = null;
   private presenceSweepTimer: number | null = null;
 
-  // WebRTC PeerConnections for HD Video Calling
+  // WebRTC Calling State
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
+  private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
   private localStream: MediaStream | null = null;
 
   // In-memory received chunks accumulator: fileId -> { chunks, received, meta, senderId }
@@ -139,7 +153,7 @@ class P2PEngine {
     this.activePeers.clear();
 
     const brokerUrl = MQTT_BROKER_URLS[0];
-    console.log('[GhostLink] Connecting to ephemeral real-time mesh at:', brokerUrl, 'for room:', cleanRoom);
+    console.log('[GhostLink] Connecting to ephemeral real-time mesh for room:', cleanRoom);
 
     try {
       this.client = mqtt.connect(brokerUrl, {
@@ -151,19 +165,15 @@ class P2PEngine {
       });
 
       this.client.on('connect', () => {
-        console.log('[GhostLink] Connected to ephemeral mesh broker! Subscribing to room topics...');
         const chatTopic = this.getChatTopic(cleanRoom);
         const presenceTopic = this.getPresenceTopic(cleanRoom);
         const signalTopic = this.getSignalTopic(cleanRoom);
 
         this.client?.subscribe([chatTopic, presenceTopic, signalTopic], (err) => {
           if (!err) {
-            console.log('[GhostLink] Subscribed successfully to room:', cleanRoom);
-            // Send instant presence heartbeat immediately
+            console.log('[GhostLink] Subscribed to room:', cleanRoom);
             this.sendPresencePing();
             this.startPresenceIntervals();
-          } else {
-            console.warn('[GhostLink] Subscription error:', err);
           }
         });
       });
@@ -173,23 +183,21 @@ class P2PEngine {
           const raw = payload.toString();
           const data = JSON.parse(raw);
 
-          // Handle Presence Heartbeats
+          // 1. Presence Heartbeats
           if (topic === this.getPresenceTopic(cleanRoom)) {
             if (data.senderId && data.senderId !== this.selfId) {
               const isNewPeer = !this.activePeers.has(data.senderId);
               this.activePeers.set(data.senderId, Date.now());
 
               if (isNewPeer) {
-                console.log('[GhostLink] Peer joined room mesh:', data.senderId, data.senderName);
                 this.events?.onPeerJoin(data.senderId);
-                // Reply with immediate presence ping so new peer sees us right away
                 this.sendPresencePing();
               }
             }
             return;
           }
 
-          // Handle WebRTC Calling Signals
+          // 2. WebRTC Video / Audio Signals
           if (topic === this.getSignalTopic(cleanRoom)) {
             if (data.senderId && data.senderId !== this.selfId && (data.targetId === this.selfId || data.targetId === 'all')) {
               this.handleWebRTCSignal(data);
@@ -197,9 +205,9 @@ class P2PEngine {
             return;
           }
 
-          // Handle Chat & Media Broadcasts
+          // 3. Chat & Media Broadcasts
           if (topic === this.getChatTopic(cleanRoom)) {
-            if (data.senderId === this.selfId) return; // Ignore own echoes
+            if (data.senderId === this.selfId) return; // Ignore own echo
 
             switch (data.type) {
               case 'chat':
@@ -228,7 +236,6 @@ class P2PEngine {
                 const fileState = this.incomingFiles.get(data.id);
                 if (!fileState) return;
 
-                // Base64 decode chunk
                 const binaryStr = atob(data.data);
                 const bytes = new Uint8Array(binaryStr.length);
                 for (let i = 0; i < binaryStr.length; i++) {
@@ -276,16 +283,12 @@ class P2PEngine {
             }
           }
         } catch (err) {
-          console.warn('[GhostLink] Parse message error:', err);
+          console.warn('[GhostLink] Signal error:', err);
         }
       });
 
-      this.client.on('error', (err) => {
-        console.warn('[GhostLink] MQTT client error:', err);
-      });
-
     } catch (err) {
-      console.error('[GhostLink] Error setting up MQTT client:', err);
+      console.error('[GhostLink] Setup error:', err);
     }
   }
 
@@ -302,13 +305,11 @@ class P2PEngine {
   }
 
   private startPresenceIntervals() {
-    // 1. Send heartbeat every 2 seconds
     if (this.peerHeartbeatTimer) clearInterval(this.peerHeartbeatTimer);
     this.peerHeartbeatTimer = window.setInterval(() => {
       this.sendPresencePing();
     }, 2000);
 
-    // 2. Sweep inactive peers (older than 5.5 seconds)
     if (this.presenceSweepTimer) clearInterval(this.presenceSweepTimer);
     this.presenceSweepTimer = window.setInterval(() => {
       const now = Date.now();
@@ -321,7 +322,6 @@ class P2PEngine {
       });
 
       deadPeers.forEach((peerId) => {
-        console.log('[GhostLink] Peer left (timeout):', peerId);
         this.activePeers.delete(peerId);
         this.events?.onPeerLeave(peerId);
       });
@@ -415,10 +415,8 @@ class P2PEngine {
       progress: 0
     };
 
-    // 1. Broadcast file metadata header
     this.publishChat({ type: 'file_meta', meta });
 
-    // 2. Stream base64 chunks
     const buffer = await file.arrayBuffer();
     const uint8View = new Uint8Array(buffer);
 
@@ -463,13 +461,17 @@ class P2PEngine {
     };
   }
 
-  // WebRTC Audio/Video Signaling over MQTT
+  // ==========================================
+  // WebRTC Direct Calling Protocol
+  // ==========================================
+
   private sendSignal(targetId: string, signalData: Record<string, unknown>) {
     if (!this.client || !this.currentRoomId) return;
     const topic = this.getSignalTopic(this.currentRoomId);
     this.client.publish(topic, JSON.stringify({
       ...signalData,
       senderId: this.selfId,
+      senderName: this.myName,
       targetId
     }), { qos: 0 });
   }
@@ -478,25 +480,91 @@ class P2PEngine {
   private async handleWebRTCSignal(data: any) {
     const peerId = data.senderId;
 
-    if (data.signalType === 'offer') {
+    if (data.signalType === 'call_invite') {
+      console.log('[GhostLink Call] Received call invite from:', peerId, data.senderName);
+      this.events?.onIncomingCall?.(peerId, data.senderName, data.mode);
+      return;
+    }
+
+    if (data.signalType === 'call_accepted') {
+      console.log('[GhostLink Call] Call accepted by peer:', peerId, 'Creating WebRTC Offer...');
+      this.events?.onCallAccepted?.(peerId);
       const pc = this.getOrCreatePeerConnection(peerId);
+      if (this.localStream) {
+        this.localStream.getTracks().forEach((track) => pc.addTrack(track, this.localStream!));
+      }
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      this.sendSignal(peerId, { signalType: 'offer', offer });
+      return;
+    }
+
+    if (data.signalType === 'call_ended') {
+      console.log('[GhostLink Call] Peer ended call:', peerId);
+      this.closePeerConnection(peerId);
+      this.events?.onCallEnded?.(peerId);
+      return;
+    }
+
+    if (data.signalType === 'offer') {
+      console.log('[GhostLink Call] Received WebRTC offer from:', peerId);
+      const pc = this.getOrCreatePeerConnection(peerId);
+      if (this.localStream) {
+        this.localStream.getTracks().forEach((track) => pc.addTrack(track, this.localStream!));
+      }
+
       await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+
+      // Drain queued ICE candidates
+      const queued = this.pendingCandidates.get(peerId) || [];
+      for (const cand of queued) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch {
+          // ignore
+        }
+      }
+      this.pendingCandidates.delete(peerId);
+
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       this.sendSignal(peerId, { signalType: 'answer', answer });
-    } else if (data.signalType === 'answer') {
+      return;
+    }
+
+    if (data.signalType === 'answer') {
+      console.log('[GhostLink Call] Received WebRTC answer from:', peerId);
       const pc = this.peerConnections.get(peerId);
       if (pc) {
         await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+
+        // Drain queued ICE candidates
+        const queued = this.pendingCandidates.get(peerId) || [];
+        for (const cand of queued) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch {
+            // ignore
+          }
+        }
+        this.pendingCandidates.delete(peerId);
       }
-    } else if (data.signalType === 'candidate') {
+      return;
+    }
+
+    if (data.signalType === 'candidate') {
       const pc = this.peerConnections.get(peerId);
-      if (pc && data.candidate) {
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
         } catch {
           // ignore
         }
+      } else {
+        // Queue candidate until remote description is set
+        const list = this.pendingCandidates.get(peerId) || [];
+        list.push(data.candidate);
+        this.pendingCandidates.set(peerId, list);
       }
     }
   }
@@ -504,7 +572,7 @@ class P2PEngine {
   private getOrCreatePeerConnection(peerId: string): RTCPeerConnection {
     let pc = this.peerConnections.get(peerId);
     if (!pc) {
-      pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      pc = new RTCPeerConnection(ICE_SERVERS);
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
@@ -513,38 +581,63 @@ class P2PEngine {
       };
 
       pc.ontrack = (event) => {
-        console.log('[GhostLink] Received remote media stream from peer:', peerId);
+        console.log('[GhostLink Call] Received remote media track from peer:', peerId);
         if (event.streams && event.streams[0]) {
           this.events?.onStream(event.streams[0], peerId);
         }
       };
-
-      if (this.localStream) {
-        this.localStream.getTracks().forEach((track) => pc!.addTrack(track, this.localStream!));
-      }
 
       this.peerConnections.set(peerId, pc);
     }
     return pc;
   }
 
-  public async addStream(stream: MediaStream) {
-    this.localStream = stream;
-    // Broadcast call offer to all active peers in room
-    for (const peerId of this.activePeers.keys()) {
-      const pc = this.getOrCreatePeerConnection(peerId);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      this.sendSignal(peerId, { signalType: 'offer', offer });
+  public startCall(mode: 'video' | 'audio', localStream: MediaStream) {
+    this.localStream = localStream;
+    // Broadcast call invitation to all peers in room
+    this.sendSignal('all', { signalType: 'call_invite', mode });
+  }
+
+  public acceptCall(callerId: string, localStream: MediaStream) {
+    this.localStream = localStream;
+    this.sendSignal(callerId, { signalType: 'call_accepted' });
+  }
+
+  public declineCall(callerId: string) {
+    this.sendSignal(callerId, { signalType: 'call_ended' });
+  }
+
+  public endCall() {
+    this.sendSignal('all', { signalType: 'call_ended' });
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((t) => t.stop());
+      this.localStream = null;
     }
+    this.peerConnections.forEach((pc) => pc.close());
+    this.peerConnections.clear();
+    this.pendingCandidates.clear();
+  }
+
+  private closePeerConnection(peerId: string) {
+    const pc = this.peerConnections.get(peerId);
+    if (pc) {
+      pc.close();
+      this.peerConnections.delete(peerId);
+    }
+    this.pendingCandidates.delete(peerId);
+  }
+
+  public addStream(stream: MediaStream) {
+    this.localStream = stream;
+    this.peerConnections.forEach((pc) => {
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    });
   }
 
   public removeStream(stream: MediaStream) {
     this.localStream = null;
     stream.getTracks().forEach((t) => t.stop());
-    this.peerConnections.forEach((pc) => pc.close());
-    this.peerConnections.clear();
+    this.endCall();
   }
 
   public async measurePing(_peerId: string): Promise<number> {
@@ -557,6 +650,8 @@ class P2PEngine {
     this.peerHeartbeatTimer = null;
     this.presenceSweepTimer = null;
 
+    this.endCall();
+
     if (this.client) {
       try {
         this.client.end(true);
@@ -566,8 +661,6 @@ class P2PEngine {
       this.client = null;
     }
 
-    this.peerConnections.forEach((pc) => pc.close());
-    this.peerConnections.clear();
     this.activePeers.clear();
     this.incomingFiles.clear();
     this.currentRoomId = '';

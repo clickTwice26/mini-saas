@@ -9,6 +9,7 @@ import { MessageInput } from './components/MessageInput';
 import { ConnectionModal } from './components/ConnectionModal';
 import { PeerMeshVisualizer } from './components/PeerMeshVisualizer';
 import { VideoCallModal } from './components/VideoCallModal';
+import { IncomingCallModal } from './components/IncomingCallModal';
 import { FileProgressWidget } from './components/FileProgressWidget';
 
 export const App: React.FC = () => {
@@ -40,6 +41,13 @@ export const App: React.FC = () => {
   const [isMeshVisualizerOpen, setIsMeshVisualizerOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => soundService.getIsMuted());
 
+  // Incoming Call State
+  const [incomingCall, setIncomingCall] = useState<{
+    callerId: string;
+    callerName: string;
+    mode: 'video' | 'audio';
+  } | null>(null);
+
   // File Transfer State for progress toast
   const [transferState, setTransferState] = useState<{
     meta: FileMetadata;
@@ -47,7 +55,7 @@ export const App: React.FC = () => {
     progress: number;
   } | null>(null);
 
-  // Call State
+  // Active Call State
   const [callState, setCallState] = useState<CallState>({
     active: false,
     mode: 'video',
@@ -93,8 +101,8 @@ export const App: React.FC = () => {
 
         // Celebration Confetti!
         confetti({
-          particleCount: 60,
-          spread: 70,
+          particleCount: 50,
+          spread: 60,
           origin: { y: 0.8 },
           colors: ['#00f2fe', '#4facfe', '#a855f7', '#10b981']
         });
@@ -182,7 +190,18 @@ export const App: React.FC = () => {
         setMessages((prev) => [...prev, audioMsg]);
       },
 
+      onIncomingCall: (callerId, callerName, mode) => {
+        setIncomingCall({ callerId, callerName, mode });
+        soundService.playReceived();
+      },
+
+      onCallEnded: () => {
+        setIncomingCall(null);
+        handleEndCall();
+      },
+
       onStream: (stream, peerId) => {
+        console.log('[GhostLink] Remote stream attached in UI from:', peerId);
         setCallState((prev) => ({
           ...prev,
           active: true,
@@ -252,7 +271,7 @@ export const App: React.FC = () => {
       name: file.name,
       size: file.size,
       type: file.type,
-      totalChunks: Math.ceil(file.size / (16 * 1024)),
+      totalChunks: Math.ceil(file.size / (32 * 1024)),
       progress: 0
     };
 
@@ -302,7 +321,10 @@ export const App: React.FC = () => {
     );
   };
 
+  // ==========================================
   // Call Handlers
+  // ==========================================
+
   const handleStartCall = async (mode: 'video' | 'audio') => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -310,7 +332,7 @@ export const App: React.FC = () => {
         audio: true
       });
 
-      p2pEngine.addStream(stream);
+      p2pEngine.startCall(mode, stream);
 
       setCallState({
         active: true,
@@ -324,6 +346,42 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error('Could not start call:', err);
       alert('Camera / Microphone permission is needed to start a call.');
+    }
+  };
+
+  const handleAcceptIncomingCall = async () => {
+    if (!incomingCall) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: incomingCall.mode === 'video',
+        audio: true
+      });
+
+      p2pEngine.acceptCall(incomingCall.callerId, stream);
+
+      setCallState({
+        active: true,
+        mode: incomingCall.mode,
+        isMuted: false,
+        isCameraOff: incomingCall.mode === 'audio',
+        isScreenSharing: false,
+        localStream: stream,
+        remoteStreams: {}
+      });
+
+      setIncomingCall(null);
+    } catch (err) {
+      console.error('Could not accept call:', err);
+      alert('Please allow camera/microphone permissions to join the call.');
+      handleDeclineIncomingCall();
+    }
+  };
+
+  const handleDeclineIncomingCall = () => {
+    if (incomingCall) {
+      p2pEngine.declineCall(incomingCall.callerId);
+      setIncomingCall(null);
     }
   };
 
@@ -370,15 +428,14 @@ export const App: React.FC = () => {
         console.error('Screen sharing error:', err);
       }
     } else {
-      // Revert to camera
       handleStartCall(callState.mode);
     }
   };
 
   const handleEndCall = () => {
+    p2pEngine.endCall();
     if (callState.localStream) {
       callState.localStream.getTracks().forEach((t) => t.stop());
-      p2pEngine.removeStream(callState.localStream);
     }
     setCallState({
       active: false,
@@ -500,7 +557,14 @@ export const App: React.FC = () => {
         selfColor={selfColor}
       />
 
-      {/* Video / Audio Call Modal */}
+      {/* Incoming Call Ringing Modal */}
+      <IncomingCallModal
+        incomingCall={incomingCall}
+        onAccept={handleAcceptIncomingCall}
+        onDecline={handleDeclineIncomingCall}
+      />
+
+      {/* Active Video / Audio Call Modal */}
       <VideoCallModal
         callState={callState}
         peers={peers}
