@@ -328,7 +328,7 @@ export const App: React.FC = () => {
     setSecretKey(newKey);
   };
 
-  // Chat message sending (Encrypted with AES-GCM-256)
+  // Chat message sending
   const handleSendMessage = (text: string, expiresAt?: number) => {
     const msg = p2pEngine.sendMessage(text, expiresAt);
     setMessages((prev) => [...prev, msg]);
@@ -578,8 +578,8 @@ export const App: React.FC = () => {
     const inviteUrl = `${window.location.origin}${window.location.pathname}#room=${encodeURIComponent(roomId)}&key=${encodeURIComponent(secretKey)}`;
     if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
       navigator.share({
-        title: 'Join my GhostLink 2-Person Encrypted Vault',
-        text: `Connect to my 1-on-1 AES-GCM-256 encrypted room #${roomId}`,
+        title: 'Join my GhostLink Room',
+        text: `Connect to room #${roomId}`,
         url: inviteUrl
       }).catch(() => {
         navigator.clipboard.writeText(inviteUrl);
@@ -600,11 +600,11 @@ export const App: React.FC = () => {
           flexDirection: 'column',
           height: '100vh',
           width: '100vw',
-          backgroundColor: 'background.default',
+          backgroundColor: '#080c16',
           overflow: 'hidden'
         }}
       >
-        {/* M3 Header */}
+        {/* Seamless Transparent Header */}
         <Header
           roomId={roomId}
           secretKey={secretKey}
@@ -618,7 +618,7 @@ export const App: React.FC = () => {
           onCopyRoomLink={handleCopyRoomLink}
         />
 
-        {/* Main Chat Canvas Card (Crisp 10px radius) */}
+        {/* Seamless Chat Area (No disjointed card borders) */}
         <Box
           component="main"
           sx={{
@@ -626,13 +626,7 @@ export const App: React.FC = () => {
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            mx: { xs: 1, sm: 1.5 },
-            mb: { xs: 1, sm: 1.5 },
-            borderRadius: '10px',
-            backgroundColor: 'background.paper',
-            border: '1px solid',
-            borderColor: 'divider',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+            backgroundColor: 'transparent'
           }}
         >
           <ChatArea
@@ -652,7 +646,7 @@ export const App: React.FC = () => {
           />
         </Box>
 
-        {/* Connection & QR Modal */}
+        {/* Modals */}
         <ConnectionModal
           isOpen={isConnectModalOpen}
           onClose={() => setIsConnectModalOpen(false)}
@@ -662,7 +656,6 @@ export const App: React.FC = () => {
           onGenerateNewRoom={handleGenerateNewRoomAndKey}
         />
 
-        {/* Mesh Topology Visualizer Modal */}
         <PeerMeshVisualizer
           isOpen={isMeshVisualizerOpen}
           onClose={() => setIsMeshVisualizerOpen(false)}
@@ -671,14 +664,12 @@ export const App: React.FC = () => {
           selfColor={selfColor}
         />
 
-        {/* Incoming Call Ringing Modal */}
         <IncomingCallModal
           incomingCall={incomingCall}
           onAccept={handleAcceptIncomingCall}
           onDecline={handleDeclineIncomingCall}
         />
 
-        {/* Zero-Acceptance Live Screen Stream Modal */}
         {screenStreamState.active && (
           <ScreenStreamModal
             stream={screenStreamState.stream}
@@ -689,13 +680,11 @@ export const App: React.FC = () => {
           />
         )}
 
-        {/* Room Locked Security Lockdown Modal */}
         <RoomLockedModal
           isOpen={isRoomLockedOpen}
           onGenerateNewRoom={handleGenerateNewRoomAndKey}
         />
 
-        {/* Active Interactive Video / Audio Call Modal */}
         <VideoCallModal
           callState={callState}
           peers={peers}
@@ -706,7 +695,6 @@ export const App: React.FC = () => {
           onEndCall={handleEndCall}
         />
 
-        {/* File Transfer Progress Widget */}
         <FileProgressWidget transferState={transferState} />
       </Box>
     </ThemeProvider>

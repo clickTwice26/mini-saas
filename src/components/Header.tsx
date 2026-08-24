@@ -69,13 +69,13 @@ export const Header: React.FC<HeaderProps> = ({
         position="static"
         elevation={0}
         sx={{
-          backgroundColor: alpha(theme.palette.background.paper, 0.75),
-          backdropFilter: 'blur(20px)',
-          borderBottom: `1px solid ${theme.palette.divider}`,
+          backgroundColor: 'transparent',
+          boxShadow: 'none',
+          borderBottom: `1px solid ${alpha(theme.palette.divider, 0.6)}`,
           px: { xs: 1, sm: 2 }
         }}
       >
-        <Toolbar sx={{ justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap', minHeight: 56 }}>
+        <Toolbar sx={{ justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap', minHeight: 56, px: 0 }}>
           {/* Clean Brand Logo */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
             <Box
@@ -86,8 +86,8 @@ export const Header: React.FC<HeaderProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.2)} 0%, ${alpha(theme.palette.secondary.main, 0.2)} 100%)`,
-                border: `1px solid ${alpha(theme.palette.primary.main, 0.3)}`,
+                backgroundColor: alpha(theme.palette.primary.main, 0.12),
+                border: `1px solid ${alpha(theme.palette.primary.main, 0.25)}`,
                 color: theme.palette.primary.main
               }}
             >
@@ -116,8 +116,8 @@ export const Header: React.FC<HeaderProps> = ({
                 onDelete={onCopyRoomLink}
                 onClick={onCopyRoomLink}
                 sx={{
-                  backgroundColor: alpha(theme.palette.background.default, 0.6),
-                  border: `1px solid ${alpha(theme.palette.primary.main, 0.25)}`,
+                  backgroundColor: alpha(theme.palette.background.paper, 0.4),
+                  border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}`,
                   borderRadius: '6px',
                   cursor: 'pointer',
                   height: 28,
@@ -137,9 +137,9 @@ export const Header: React.FC<HeaderProps> = ({
                 size="small"
                 onClick={() => setShowSafetyModal(true)}
                 sx={{
-                  backgroundColor: isRoomFull ? alpha(theme.palette.success.main, 0.12) : alpha(theme.palette.text.secondary, 0.08),
+                  backgroundColor: isRoomFull ? alpha(theme.palette.success.main, 0.12) : alpha('#ffffff', 0.04),
                   color: isRoomFull ? theme.palette.success.light : theme.palette.text.secondary,
-                  border: `1px solid ${isRoomFull ? alpha(theme.palette.success.main, 0.3) : theme.palette.divider}`,
+                  border: `1px solid ${isRoomFull ? alpha(theme.palette.success.main, 0.3) : alpha(theme.palette.divider, 0.6)}`,
                   borderRadius: '6px',
                   height: 28,
                   fontWeight: 700,
